@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC Oracle Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #12121a;
+            --surface-2: #1a1a26;
+            --border: #2a2a3a;
+            --text: #e8e8f0;
+            --text-dim: #6b6b80;
+            --green: #00ff88;
+            --green-dim: #00ff8830;
+            --red: #ff3366;
+            --red-dim: #ff336630;
+            --blue: #4488ff;
+            --blue-dim: #4488ff30;
+            --gold: #ffaa00;
+            --gold-dim: #ffaa0030;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; min-height: 100vh; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 30px 24px; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo-icon { width: 36px; height: 36px; border: 2px solid var(--green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 0 0 20px var(--green-dim); }
+        .logo h1 { font-size: 20px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; }
+        .logo h1 span { color: var(--green); }
+        .status-badge { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; background: var(--gold-dim); border: 1px solid var(--gold); color: var(--gold); }
+        .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: blink 2s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        .card-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+        .card-value { font-size: 28px; font-weight: 700; }
+        .card-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+        .green { color: var(--green); } .red { color: var(--red); } .blue { color: var(--blue); }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .signal-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+        .signal-card h2 { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
+        .latest-signal { display: flex; align-items: center; gap: 20px; }
+        .signal-direction { font-size: 48px; font-weight: 700; padding: 16px 32px; border-radius: 12px; line-height: 1; }
+        .signal-direction.up { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+        .signal-direction.down { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+        .signal-meta { flex: 1; }
+        .signal-meta p { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+        .confidence-bar { width: 100%; height: 6px; background: var(--surface-2); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+        .confidence-fill { height: 100%; border-radius: 3px; }
+        .indicators-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+        .indicator-item { background: var(--surface-2); padding: 12px; border-radius: 8px; }
+        .indicator-item .label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+        .indicator-item .value { font-size: 15px; font-weight: 600; margin-top: 4px; }
+        .signal-history { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+        .signal-history h2 { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+        td { font-size: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        .outcome-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 10px; font-weight: 600; letter-spacing: 1px; }
+        .outcome-badge.win { background: var(--green-dim); color: var(--green); }
+        .outcome-badge.loss { background: var(--red-dim); color: var(--red); }
+        .outcome-badge.pending { background: var(--blue-dim); color: var(--blue); }
+        .journal-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+        .journal-section h2 { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
+        .journal-entry { padding: 14px; background: var(--surface-2); border-radius: 8px; margin-bottom: 10px; border-left: 3px solid var(--blue); }
+        .journal-entry.pattern { border-left-color: var(--green); }
+        .journal-entry.mistake { border-left-color: var(--red); }
+        .journal-entry.insight { border-left-color: var(--gold); }
+        .journal-entry .type { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+        .journal-entry .content { font-size: 12px; line-height: 1.6; }
+        .refresh-btn { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 11px; cursor: pointer; }
+        .refresh-btn:hover { border-color: var(--green); color: var(--green); }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        #last-update { font-size: 10px; color: var(--text-dim); }
+        @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } .grid-2 { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="logo-icon">&#x20BF;</div>
+                <h1>BTC <span>Oracle</span></h1>
+            </div>
+            <div class="header-right">
+                <span id="last-update"></span>
+                <div class="status-badge"><div class="status-dot"></div>Learning Mode</div>
+                <button class="refresh-btn" onclick="loadAll()">Refresh</button>
+            </div>
+        </header>
+        <div class="grid">
+            <div class="card"><div class="card-label">Win Rate</div><div class="card-value" id="win-rate">--</div><div class="card-sub" id="win-rate-sub">Loading...</div></div>
+            <div class="card"><div class="card-label">Total Signals</div><div class="card-value blue" id="total-signals">--</div><div class="card-sub" id="signals-sub">Loading...</div></div>
+            <div class="card"><div class="card-label">Current Streak</div><div class="card-value" id="streak">--</div><div class="card-sub" id="streak-sub">Loading...</div></div>
+            <div class="card"><div class="card-label">BTC Price</div><div class="card-value" id="btc-price">--</div><div class="card-sub" id="price-sub">Loading...</div></div>
+        </div>
+        <div class="grid-2">
+            <div class="signal-card"><h2>Latest Signal</h2><div id="latest-signal" style="color:var(--text-dim)">Waiting for data...</div></div>
+            <div class="signal-card"><h2>Current Indicators</h2><div id="indicators" style="color:var(--text-dim)">Waiting for data...</div></div>
+        </div>
+        <div class="signal-history"><h2>Signal History</h2><div id="history-table" style="color:var(--text-dim)">Waiting for data...</div></div>
+        <div class="journal-section"><h2>Bot Journal</h2><div id="journal" style="color:var(--text-dim)">Waiting for entries...</div></div>
+    </div>
+    <script>
+        const SB_URL = 'https://axdqvppiurtabyrviyxm.supabase.co';
+        const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF4ZHF2cHBpdXJ0YWJ5cnZpeXhtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxOTQwMzQsImV4cCI6MjA4ODc3MDAzNH0.i9ybVvhzwLD1VM59ra51-JRCm4EqDUfL6g8XlwwT8NQ';
+        async function q(table, params='') {
+            const r = await fetch(`${SB_URL}/rest/v1/${table}?${params}`, {headers:{'apikey':SB_KEY,'Authorization':`Bearer ${SB_KEY}`}});
+            return r.json();
+        }
+        function $(id){return document.getElementById(id)}
+        function fp(p){return p?`$${Number(p).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:'--'}
+        function ft(ts){if(!ts)return'--';const d=new Date(ts);return d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+' '+d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+
+        async function loadAll(){
+            $('last-update').textContent='Updated: '+new Date().toLocaleTimeString();
+            // Performance
+            const perf=await q('performance','order=recorded_at.desc&limit=1');
+            if(perf&&perf.length){const p=perf[0];const wr=(p.win_rate*100).toFixed(1);$('win-rate').textContent=wr+'%';$('win-rate').className='card-value '+(p.win_rate>=0.5?'green':'red');$('win-rate-sub').textContent=p.total_wins+'W / '+p.total_losses+'L';$('total-signals').textContent=p.total_signals;$('streak').textContent=Math.abs(p.streak_current);$('streak').className='card-value '+(p.streak_current>=0?'green':'red');$('streak-sub').textContent=p.streak_current>=0?'Win streak':'Loss streak'}
+            // Latest signal
+            const sigs=await q('signals','order=created_at.desc&limit=1');
+            if(sigs&&sigs.length){const s=sigs[0];const up=s.signal==='UP';const conf=((s.confidence||0)*100).toFixed(0);
+            $('latest-signal').innerHTML=`<div class="latest-signal"><div class="signal-direction ${up?'up':'down'}">${s.signal}</div><div class="signal-meta"><p>Price: ${fp(s.btc_price_at_signal)}</p><p>Time: ${ft(s.created_at)}</p><p>Confidence: ${conf}%</p><div class="confidence-bar"><div class="confidence-fill" style="width:${conf}%;background:${up?'var(--green)':'var(--red)'}"></div></div><p style="margin-top:10px;font-size:11px;color:var(--text);line-height:1.5">${(s.analysis_notes||'').slice(0,200)}</p></div></div>`;
+            $('btc-price').textContent=fp(s.btc_price_at_signal);$('price-sub').textContent='As of '+ft(s.created_at);
+            // Indicators
+            const items=[{l:'RSI',v:s.rsi?s.rsi.toFixed(1):'--',c:s.rsi>70?'red':s.rsi<30?'green':''},{l:'MACD',v:s.macd?s.macd.toFixed(4):'--',c:s.macd>0?'green':'red'},{l:'MACD Sig',v:s.macd_signal?s.macd_signal.toFixed(4):'--'},{l:'BB Upper',v:fp(s.bollinger_upper)},{l:'BB Mid',v:fp(s.bollinger_middle)},{l:'BB Lower',v:fp(s.bollinger_lower)},{l:'EMA 9',v:fp(s.ema_9)},{l:'EMA 21',v:fp(s.ema_21)},{l:'Momentum',v:s.momentum?s.momentum.toFixed(2):'--',c:s.momentum>0?'green':'red'}];
+            $('indicators').innerHTML='<div class="indicators-grid">'+items.map(i=>`<div class="indicator-item"><div class="label">${i.l}</div><div class="value ${i.c||''}">${i.v}</div></div>`).join('')+'</div>'}
+            // History
+            const hist=await q('signals','order=created_at.desc&limit=20');
+            if(hist&&hist.length){$('history-table').innerHTML=`<table><thead><tr><th>Time</th><th>Signal</th><th>Price</th><th>Close</th><th>Change</th><th>Conf</th><th>Result</th></tr></thead><tbody>${hist.map(s=>{const ch=s.btc_price_at_close&&s.btc_price_at_signal?(s.btc_price_at_close-s.btc_price_at_signal):null;const cs=ch!==null?`${ch>=0?'+':''}$${ch.toFixed(2)}`:'--';const cc=ch!==null?(ch>=0?'green':'red'):'';const oc=s.outcome==='WIN'?'win':s.outcome==='LOSS'?'loss':'pending';return`<tr><td>${ft(s.created_at)}</td><td class="${s.signal==='UP'?'green':'red'}">${s.signal}</td><td>${fp(s.btc_price_at_signal)}</td><td>${fp(s.btc_price_at_close)}</td><td class="${cc}">${cs}</td><td>${s.confidence?(s.confidence*100).toFixed(0)+'%':'--'}</td><td><span class="outcome-badge ${oc}">${s.outcome||'PENDING'}</span></td></tr>`}).join('')}</tbody></table>`}
+            // Journal
+            const jrnl=await q('journal','order=created_at.desc&limit=10');
+            if(jrnl&&jrnl.length){$('journal').innerHTML=jrnl.map(j=>`<div class="journal-entry ${j.entry_type.toLowerCase()}"><div class="type">${j.entry_type} — ${ft(j.created_at)}</div><div class="content">${j.content}</div></div>`).join('')}
+        }
+        loadAll();setInterval(loadAll,30000);
+    </script>
+</body>
+</html>
