@@ -83,6 +83,68 @@ def calculate_vwap(prices, volumes):
     return float(np.sum(prices[valid] * volumes[valid]) / np.sum(volumes[valid]))
 
 
+def calculate_stoch_rsi(prices, period=14, smooth_k=3, smooth_d=3):
+    """Stochastic RSI - more sensitive than regular RSI."""
+    if len(prices) < period * 2:
+        return None, None
+    rsi_values = []
+    for i in range(period, len(prices)):
+        rsi = calculate_rsi(prices[:i+1], period)
+        if rsi is not None:
+            rsi_values.append(rsi)
+    if len(rsi_values) < period:
+        return None, None
+    series = pd.Series(rsi_values)
+    lowest = series.rolling(period).min()
+    highest = series.rolling(period).max()
+    stoch_rsi = (series - lowest) / (highest - lowest)
+    k = stoch_rsi.rolling(smooth_k).mean()
+    d = k.rolling(smooth_d).mean()
+    return round(float(k.iloc[-1]) * 100, 2) if not pd.isna(k.iloc[-1]) else None, \
+           round(float(d.iloc[-1]) * 100, 2) if not pd.isna(d.iloc[-1]) else None
+
+
+def calculate_atr(prices, period=14):
+    """Average True Range - volatility measure."""
+    if len(prices) < period + 1:
+        return None
+    true_ranges = []
+    for i in range(1, len(prices)):
+        tr = abs(prices[i] - prices[i-1])
+        true_ranges.append(tr)
+    if len(true_ranges) < period:
+        return None
+    return float(np.mean(true_ranges[-period:]))
+
+
+def calculate_obv_trend(prices, volumes):
+    """On Balance Volume trend direction."""
+    if len(prices) < 10 or len(volumes) < 10:
+        return None
+    obv = [0]
+    for i in range(1, len(prices)):
+        vol = volumes[i] if volumes[i] and not np.isnan(volumes[i]) else 0
+        if prices[i] > prices[i-1]:
+            obv.append(obv[-1] + vol)
+        elif prices[i] < prices[i-1]:
+            obv.append(obv[-1] - vol)
+        else:
+            obv.append(obv[-1])
+    # OBV trend: compare last 5 avg to previous 5 avg
+    if len(obv) >= 10:
+        recent_avg = np.mean(obv[-5:])
+        prev_avg = np.mean(obv[-10:-5])
+        return "RISING" if recent_avg > prev_avg else "FALLING"
+    return None
+
+
+def calculate_price_rate_of_change(prices, period=10):
+    """Rate of change - speed of price movement."""
+    if len(prices) < period + 1:
+        return None
+    return round(((prices[-1] - prices[-period-1]) / prices[-period-1]) * 100, 4)
+
+
 def get_all_indicators():
     print("Calculating indicators...")
     df = fetch_recent_ticks(minutes=120)
@@ -104,6 +166,15 @@ def get_all_indicators():
     rsi = calculate_rsi(prices)
     macd, macd_sig, macd_hist = calculate_macd(prices)
     bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(prices)
+    stoch_k, stoch_d = calculate_stoch_rsi(prices)
+    atr = calculate_atr(prices)
+    obv_trend = calculate_obv_trend(prices, vol_array)
+    roc = calculate_price_rate_of_change(prices)
+
+    # Bollinger Band position (0 = at lower, 1 = at upper)
+    bb_position = None
+    if bb_upper and bb_lower and bb_upper != bb_lower:
+        bb_position = round((current_price - bb_lower) / (bb_upper - bb_lower), 4)
 
     indicators = {
         "current_price": current_price,
@@ -114,17 +185,25 @@ def get_all_indicators():
         "bollinger_upper": round(bb_upper, 2) if bb_upper else None,
         "bollinger_middle": round(bb_middle, 2) if bb_middle else None,
         "bollinger_lower": round(bb_lower, 2) if bb_lower else None,
+        "bollinger_position": bb_position,
         "ema_9": round(calculate_ema(prices, 9), 2) if calculate_ema(prices, 9) else None,
         "ema_21": round(calculate_ema(prices, 21), 2) if calculate_ema(prices, 21) else None,
         "sma_50": round(calculate_sma(prices, 50), 2) if calculate_sma(prices, 50) else None,
         "momentum": round(calculate_momentum(prices), 2) if calculate_momentum(prices) else None,
         "vwap": round(calculate_vwap(prices, vol_array), 2) if calculate_vwap(prices, vol_array) else None,
+        "stoch_rsi_k": stoch_k,
+        "stoch_rsi_d": stoch_d,
+        "atr": round(atr, 2) if atr else None,
+        "obv_trend": obv_trend,
+        "rate_of_change": roc,
+        "price_vs_vwap": "ABOVE" if calculate_vwap(prices, vol_array) and current_price > calculate_vwap(prices, vol_array) else "BELOW" if calculate_vwap(prices, vol_array) else None,
+        "ema_crossover": "BULLISH" if calculate_ema(prices, 9) and calculate_ema(prices, 21) and calculate_ema(prices, 9) > calculate_ema(prices, 21) else "BEARISH" if calculate_ema(prices, 9) and calculate_ema(prices, 21) else None,
         "volume_24h": float(vol_array[-1]) if len(vol_array) > 0 else None,
         "tick_count": len(df),
         "data_span_minutes": (df["recorded_at"].max() - df["recorded_at"].min()).total_seconds() / 60
     }
 
-    print(f"  Price: ${current_price:,.2f} | RSI: {indicators['rsi']} | Ticks: {indicators['tick_count']}")
+    print(f"  Price: ${current_price:,.2f} | RSI: {indicators['rsi']} | StochRSI: {stoch_k} | OBV: {obv_trend} | Ticks: {indicators['tick_count']}")
     return indicators
 
 
