@@ -225,10 +225,13 @@ def get_metrics_summary():
 
     if metrics.get("best_hours"):
         best = metrics["best_hours"][:3]
-        lines.append(f"Best Hours (UTC): {', '.join(f'{h[\"hour_utc\"]}:00 ({h[\"win_rate\"]}%)' for h in best)}")
+        best_str = ', '.join(str(h['hour_utc']) + ':00 (' + str(h['win_rate']) + '%)' for h in best)
+        best_str = ', '.join(str(h['hour_utc']) + ':00 (' + str(h['win_rate']) + '%)' for h in best)
+        lines.append('Best Hours (UTC): ' + best_str)
     if metrics.get("worst_hours"):
         worst = metrics["worst_hours"][:3]
-        lines.append(f"Worst Hours (UTC): {', '.join(f'{h[\"hour_utc\"]}:00 ({h[\"win_rate\"]}%)' for h in worst)}")
+        worst_str = ', '.join(str(h['hour_utc']) + ':00 (' + str(h['win_rate']) + '%)' for h in worst)
+        lines.append('Worst Hours (UTC): ' + worst_str)
 
     if combos.get("best_combos"):
         lines.append("\n=== BEST INDICATOR COMBOS ===")
