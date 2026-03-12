@@ -1,5 +1,6 @@
 """
-BTC Oracle - Main Signal Bot (V3 - Full Arsenal + Self Training)
+BTC Oracle V3 - Full Professional Arsenal
+Scoring model + Claude hybrid, advanced metrics, Kalshi odds, combos
 """
 
 import os
@@ -14,6 +15,9 @@ from news_scanner import analyze_news_sentiment
 from correlated_assets import get_all_correlated_data
 from pattern_analyzer import get_pattern_summary
 from self_trainer import run_self_training
+from scoring_model import score_signal, get_scoring_summary
+from advanced_metrics import get_metrics_summary
+from kalshi_odds import get_kalshi_btc_contracts, analyze_edge
 
 load_dotenv()
 
@@ -23,111 +27,107 @@ claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 def get_past_signals(limit=20):
     return db.select("signals", f"order=created_at.desc&limit={limit}")
 
-
 def get_journal_entries(limit=10):
     return db.select("journal", f"order=created_at.desc&limit={limit}")
-
 
 def get_performance_stats():
     data = db.select("performance", "order=recorded_at.desc&limit=1")
     return data[0] if data else None
 
-
 def get_strategy_document():
     data = db.select("journal", "entry_type=eq.STRATEGY&order=created_at.desc&limit=1")
     return data[0]["content"] if data else "No strategy document yet."
-
 
 def get_trade_reviews(limit=5):
     data = db.select("journal", f"entry_type=eq.TRADE_REVIEW&order=created_at.desc&limit={limit}")
     return "\n".join(f"  - {r['content']}" for r in data) if data else "No trade reviews yet."
 
 
-def ask_claude_for_signal(indicators, market_data, news_data, correlated_data, pattern_summary, strategy_doc, trade_reviews, past_signals, journal_entries, performance):
+def ask_claude_for_signal(indicators, market_data, news_data, correlated_data,
+                          pattern_summary, strategy_doc, trade_reviews, metrics_summary,
+                          scoring_output, kalshi_data, edge_analysis,
+                          past_signals, journal_entries, performance):
     past_text = ""
     if past_signals:
-        for s in past_signals[:20]:
+        for s in past_signals[:15]:
             outcome = s.get('outcome', 'PENDING') or 'PENDING'
             past_text += f"  {s['created_at']}: {s['signal']} @ ${s.get('btc_price_at_signal', 'N/A')} -> {outcome}\n"
     else:
         past_text = "  No previous signals yet.\n"
 
-    journal_text = ""
-    if journal_entries:
-        for j in journal_entries[:10]:
-            journal_text += f"  [{j['entry_type']}] {j['content'][:150]}\n"
-    else:
-        journal_text = "  No journal entries yet.\n"
+    journal_text = "\n".join(f"  [{j['entry_type']}] {j['content'][:120]}" for j in (journal_entries or [])[:8]) or "  None yet."
 
-    perf_text = "No performance data yet."
+    perf_text = "No data yet."
     if performance:
-        perf_text = f"Win Rate: {performance.get('win_rate', 0):.1%} | Total: {performance.get('total_signals', 0)} | Wins: {performance.get('total_wins', 0)} | Losses: {performance.get('total_losses', 0)}"
+        perf_text = f"WR: {performance.get('win_rate', 0):.1%} | Total: {performance.get('total_signals', 0)} | {performance.get('total_wins', 0)}W/{performance.get('total_losses', 0)}L"
 
     market_text = "\n".join(f"  {k}: {v}" for k, v in market_data.items())
-    news_text = "\n".join(f"  {k}: {v}" for k, v in news_data.items() if k != "news_headlines" and k != "reddit_headlines")
-    news_headlines = news_data.get("news_headlines", "None")
+    news_text = "\n".join(f"  {k}: {v}" for k, v in news_data.items() if "headline" not in k.lower())
     correlated_text = "\n".join(f"  {k}: {v}" for k, v in correlated_data.items())
 
-    prompt = f"""You are BTC Oracle V3, an elite Bitcoin prediction AI.
-Follow your STRATEGY DOCUMENT closely.
+    kalshi_text = "Not available"
+    if kalshi_data:
+        kalshi_text = f"Market expects: {kalshi_data.get('kalshi_market_expects', '?')} ({kalshi_data.get('kalshi_market_confidence', 0)}%)"
+    edge_text = ""
+    if edge_analysis:
+        edge_text = f"Edge: {edge_analysis.get('edge_type', '?')} - {edge_analysis.get('edge_description', '')} (Strength: {edge_analysis.get('edge_strength', '?')})"
 
-Predict: will BTC be HIGHER or LOWER in exactly 15 minutes?
+    prompt = f"""You are BTC Oracle V3. You have a scoring model AND your own analysis.
+The scoring model gives a numerical recommendation. You can AGREE or OVERRIDE it with reasoning.
+
+=== SCORING MODEL OUTPUT ===
+{scoring_output}
+
+=== KALSHI MARKET ODDS ===
+{kalshi_text}
+{edge_text}
 
 === YOUR STRATEGY DOCUMENT ===
 {strategy_doc}
+
+=== ADVANCED METRICS ===
+{metrics_summary}
 
 === RECENT TRADE REVIEWS ===
 {trade_reviews}
 
 === TECHNICAL INDICATORS ===
-  Price: ${indicators['current_price']:,.2f}
-  RSI (14): {indicators.get('rsi', 'N/A')}
-  Stochastic RSI: K={indicators.get('stoch_rsi_k', 'N/A')} D={indicators.get('stoch_rsi_d', 'N/A')}
-  MACD: {indicators.get('macd', 'N/A')} (Signal: {indicators.get('macd_signal', 'N/A')}, Hist: {indicators.get('macd_histogram', 'N/A')})
-  Bollinger: Lower={indicators.get('bollinger_lower', 'N/A')} | Mid={indicators.get('bollinger_middle', 'N/A')} | Upper={indicators.get('bollinger_upper', 'N/A')}
-  BB Position: {indicators.get('bollinger_position', 'N/A')} (0=lower, 1=upper)
-  EMA 9: {indicators.get('ema_9', 'N/A')} | EMA 21: {indicators.get('ema_21', 'N/A')} | SMA 50: {indicators.get('sma_50', 'N/A')}
-  EMA Cross: {indicators.get('ema_crossover', 'N/A')}
+  Price: ${indicators['current_price']:,.2f} | RSI: {indicators.get('rsi', 'N/A')} | StochRSI K: {indicators.get('stoch_rsi_k', 'N/A')}
+  MACD: {indicators.get('macd', 'N/A')} (Hist: {indicators.get('macd_histogram', 'N/A')})
+  BB Position: {indicators.get('bollinger_position', 'N/A')} | EMA Cross: {indicators.get('ema_crossover', 'N/A')}
   Momentum: {indicators.get('momentum', 'N/A')} | ROC: {indicators.get('rate_of_change', 'N/A')}%
-  VWAP: {indicators.get('vwap', 'N/A')} | Price vs VWAP: {indicators.get('price_vs_vwap', 'N/A')}
-  ATR: {indicators.get('atr', 'N/A')} | OBV Trend: {indicators.get('obv_trend', 'N/A')}
+  VWAP: {indicators.get('price_vs_vwap', 'N/A')} | OBV: {indicators.get('obv_trend', 'N/A')} | ATR: {indicators.get('atr', 'N/A')}
 
 === ORDER BOOK & TRADE FLOW ===
 {market_text}
 
 === NEWS & SENTIMENT ===
 {news_text}
-  Headlines: {news_headlines[:200]}
 
-=== CORRELATED ASSETS & MACRO ===
+=== CORRELATED ASSETS ===
 {correlated_text}
 
-=== PATTERN ANALYSIS ===
+=== PATTERN ANALYSIS & COMBOS ===
 {pattern_summary}
 
 === PAST SIGNALS ===
 {past_text}
 
-=== PERFORMANCE ===
-{perf_text}
+=== PERFORMANCE === {perf_text}
 
-=== DECISION FRAMEWORK ===
-1. CHECK YOUR STRATEGY DOCUMENT FIRST
-2. Order book + trade flow (most immediate)
-3. Multi-timeframe momentum alignment
-4. News sentiment (breaking events override technicals)
-5. Correlated asset momentum
-6. Technical confluence (RSI + MACD + BB + StochRSI + OBV)
-7. Your pattern stats
-8. Volatility regime
+=== DECISION RULES ===
+1. Start with the scoring model recommendation
+2. Check Kalshi odds - contrarian signals with high bot confidence = strongest edge
+3. Check your strategy document rules
+4. Verify with order book/trade flow (most immediate signal)
+5. News can override everything if breaking
+6. Check your combo analysis - only trade combos that historically win
+7. If scoring model and your analysis DISAGREE, explain why you're overriding
 
-RULES:
-- LEARNING MODE: Always output UP or DOWN. No WAIT.
-- FOLLOW YOUR STRATEGY DOCUMENT
-- Be specific about which data points drove your decision
+LEARNING MODE: Always UP or DOWN. No WAIT yet.
 
 JSON only:
-{{"signal": "UP" or "DOWN", "confidence": 0.0 to 1.0, "reasoning": "Your detailed analysis"}}"""
+{{"signal": "UP" or "DOWN", "confidence": 0.0 to 1.0, "reasoning": "analysis referencing scoring model, Kalshi odds, and key data"}}"""
 
     try:
         response = claude.messages.create(
@@ -173,15 +173,12 @@ def check_previous_signals():
     cutoff_start = (datetime.now(timezone.utc) - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     cutoff_end = (datetime.now(timezone.utc) - timedelta(minutes=14)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     signals = db.select("signals", f"outcome=is.null&created_at=gte.{cutoff_start}&created_at=lte.{cutoff_end}")
-
     if not signals:
         return
-
     recent = fetch_recent_ticks(minutes=5)
     if recent.empty:
         return
     current_price = float(recent["price"].iloc[-1])
-
     for signal in signals:
         price_at = signal["btc_price_at_signal"]
         if not price_at:
@@ -189,13 +186,9 @@ def check_previous_signals():
         went_up = current_price > price_at
         predicted_up = signal["signal"] == "UP"
         outcome = "WIN" if went_up == predicted_up else "LOSS"
-
-        db.update("signals", "id", signal["id"], {
-            "btc_price_at_close": current_price,
-            "outcome": outcome
-        })
+        db.update("signals", "id", signal["id"], {"btc_price_at_close": current_price, "outcome": outcome})
         change = current_price - price_at
-        print(f"  Signal #{signal['id']}: {signal['signal']} -> {'UP' if went_up else 'DOWN'} (${change:+,.2f}) = {outcome}")
+        print(f"  #{signal['id']}: {signal['signal']} -> {'UP' if went_up else 'DOWN'} (${change:+,.2f}) = {outcome}")
 
 
 def update_performance():
@@ -207,7 +200,6 @@ def update_performance():
     wins = outcomes.count("WIN")
     losses = outcomes.count("LOSS")
     win_rate = wins / total if total > 0 else 0
-
     streak = 0
     for o in reversed(outcomes):
         if streak == 0:
@@ -216,12 +208,8 @@ def update_performance():
             streak += 1 if streak > 0 else -1
         else:
             break
-
-    db.insert("performance", {
-        "total_signals": total, "total_wins": wins,
-        "total_losses": losses, "win_rate": win_rate, "streak_current": streak
-    })
-    print(f"  Performance: {win_rate:.1%} ({wins}W/{losses}L) | Streak: {streak}")
+    db.insert("performance", {"total_signals": total, "total_wins": wins, "total_losses": losses, "win_rate": win_rate, "streak_current": streak})
+    print(f"  {win_rate:.1%} ({wins}W/{losses}L) | Streak: {streak}")
 
 
 def run_signal_cycle():
@@ -229,47 +217,56 @@ def run_signal_cycle():
     print(f"BTC ORACLE V3 | {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print("=" * 60)
 
-    print("\n[1/8] Checking previous signals...")
+    print("\n[1/10] Checking previous signals...")
     check_previous_signals()
 
-    print("\n[2/8] Updating performance...")
+    print("\n[2/10] Updating performance...")
     update_performance()
 
-    print("\n[3/8] Self-training (reviewing last trade)...")
+    print("\n[3/10] Self-training...")
     run_self_training()
 
-    print("\n[4/8] Calculating technical indicators...")
+    print("\n[4/10] Technical indicators...")
     indicators = get_all_indicators()
     if not indicators:
-        print("  Not enough data. Run collector.py first.")
+        print("  Not enough data yet.")
         return
 
-    print("\n[5/8] Fetching market data...")
+    print("\n[5/10] Market data (order book, trade flow)...")
     market_data = get_all_market_data()
 
-    print("\n[6/8] Scanning news & sentiment...")
+    print("\n[6/10] News & sentiment...")
     news_data = analyze_news_sentiment()
 
-    print("\n[7/8] Checking correlated assets & macro...")
+    print("\n[7/10] Correlated assets...")
     correlated_data = get_all_correlated_data()
 
-    print("\n[8/8] Consulting Claude V3...")
-    pattern_summary = get_pattern_summary()
-    strategy_doc = get_strategy_document()
-    trade_reviews = get_trade_reviews(5)
+    print("\n[8/10] Scoring model...")
+    score, score_conf, score_signal_dir = score_signal(indicators, market_data)
+    scoring_output = f"Score: {score:+.3f} | Model says: {score_signal_dir} ({score_conf:.0%} confidence)"
+    print(f"  {scoring_output}")
 
+    print("\n[9/10] Kalshi odds...")
+    kalshi_data = get_kalshi_btc_contracts()
+    edge_analysis = analyze_edge(score_signal_dir, score_conf, kalshi_data) if kalshi_data else {}
+    if kalshi_data:
+        print(f"  Market expects: {kalshi_data.get('kalshi_market_expects', '?')} ({kalshi_data.get('kalshi_market_confidence', 0)}%)")
+    else:
+        print("  No Kalshi data available")
+
+    print("\n[10/10] Consulting Claude V3 (full arsenal)...")
     signal_data = ask_claude_for_signal(
         indicators, market_data, news_data, correlated_data,
-        pattern_summary, strategy_doc, trade_reviews,
-        get_past_signals(20), get_journal_entries(10), get_performance_stats()
+        get_pattern_summary(), get_strategy_document(), get_trade_reviews(5),
+        get_metrics_summary(), scoring_output, kalshi_data, edge_analysis,
+        get_past_signals(15), get_journal_entries(8), get_performance_stats()
     )
 
     print(f"\n  >>> SIGNAL: {signal_data['signal']} ({signal_data['confidence']:.0%})")
+    print(f"  >>> Model: {score_signal_dir} | Claude: {signal_data['signal']} | {'AGREE' if score_signal_dir == signal_data['signal'] else 'OVERRIDE'}")
     print(f"  >>> {signal_data.get('reasoning', '')[:200]}...")
 
-    print("\n  Logging signal...")
     log_signal(signal_data, indicators)
-
     print("\nCycle complete.")
 
 
