@@ -125,7 +125,7 @@ def calculate_stoch_rsi(prices, period=14):
     
     k_val = float(stoch.iloc[-1]) * 100 if pd.notna(stoch.iloc[-1]) else None
     d_val = float(d.iloc[-1]) * 100 if pd.notna(d.iloc[-1]) else None
-    return round(k_val, 2) if k_val else None, round(d_val, 2) if d_val else None
+    return round(k_val, 2) if k_val is not None else None, round(d_val, 2) if d_val is not None else None
 
 
 def calculate_atr(highs, lows, closes, period=14):
@@ -218,7 +218,7 @@ def get_all_indicators():
         trend_5m, _ = detect_trend(df_5m["close"].values.astype(float))
     
     bb_position = None
-    if bb_upper and bb_lower and bb_upper != bb_lower:
+    if bb_upper is not None and bb_lower is not None and bb_upper != bb_lower:
         bb_position = round((current_price - bb_lower) / (bb_upper - bb_lower), 4)
     
     indicators = {
@@ -227,21 +227,21 @@ def get_all_indicators():
         "macd": round(macd, 4) if macd is not None else None,
         "macd_signal": round(macd_sig, 4) if macd_sig is not None else None,
         "macd_histogram": round(macd_hist, 4) if macd_hist is not None else None,
-        "bollinger_upper": round(bb_upper, 2) if bb_upper else None,
-        "bollinger_middle": round(bb_middle, 2) if bb_middle else None,
-        "bollinger_lower": round(bb_lower, 2) if bb_lower else None,
+        "bollinger_upper": round(bb_upper, 2) if bb_upper is not None else None,
+        "bollinger_middle": round(bb_middle, 2) if bb_middle is not None else None,
+        "bollinger_lower": round(bb_lower, 2) if bb_lower is not None else None,
         "bollinger_position": bb_position,
-        "ema_9": round(ema_9, 2) if ema_9 else None,
-        "ema_21": round(ema_21, 2) if ema_21 else None,
-        "sma_50": round(sma_50, 2) if sma_50 else None,
-        "ema_crossover": "BULLISH" if ema_9 and ema_21 and ema_9 > ema_21 else "BEARISH" if ema_9 and ema_21 else None,
+        "ema_9": round(ema_9, 2) if ema_9 is not None else None,
+        "ema_21": round(ema_21, 2) if ema_21 is not None else None,
+        "sma_50": round(sma_50, 2) if sma_50 is not None else None,
+        "ema_crossover": "BULLISH" if ema_9 is not None and ema_21 is not None and ema_9 > ema_21 else "BEARISH" if ema_9 is not None and ema_21 is not None else None,
         "momentum": round(momentum, 2) if momentum is not None else None,
         "rate_of_change": roc,
-        "vwap": round(vwap, 2) if vwap else None,
-        "price_vs_vwap": "ABOVE" if vwap and current_price > vwap else "BELOW" if vwap else None,
+        "vwap": round(vwap, 2) if vwap is not None else None,
+        "price_vs_vwap": "ABOVE" if vwap is not None and current_price > vwap else "BELOW" if vwap is not None else None,
         "stoch_rsi_k": stoch_k,
         "stoch_rsi_d": stoch_d,
-        "atr": round(atr, 2) if atr else None,
+        "atr": round(atr, 2) if atr is not None else None,
         "obv_trend": obv,
         "trend_1m": trend_1m,
         "trend_5m": trend_5m,
