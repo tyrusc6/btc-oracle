@@ -1,8 +1,8 @@
 """
-BTC Oracle - Self Training Engine
-Analyzes every single trade after outcome.
-Does deep strategic review every 20 trades.
-Builds a living strategy document that feeds into every prediction.
+BTC Oracle - Self Training Engine (V2)
+- Reviews EACH trade exactly once (tracks reviewed IDs)
+- Every 20 trades: deep strategy review
+- Feeds structured rules back, not just text
 """
 
 import os
@@ -17,40 +17,41 @@ load_dotenv()
 
 claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+# Track which signals we've already reviewed (in memory, resets on deploy)
+reviewed_signal_ids = set()
 
-def get_latest_resolved_signal():
-    """Get the most recently resolved signal."""
-    data = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=1")
-    return data[0] if data else None
+
+def get_unreviewed_signals():
+    """Get resolved signals that haven't been reviewed yet."""
+    signals = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=10")
+    if not signals:
+        return []
+    return [s for s in signals if s["id"] not in reviewed_signal_ids]
 
 
 def get_strategy_document():
-    """Get the current strategy document from journal."""
     data = db.select("journal", "entry_type=eq.STRATEGY&order=created_at.desc&limit=1")
     return data[0]["content"] if data else "No strategy document yet. Build one from scratch."
 
 
 def analyze_single_trade(signal):
-    """Quick analysis after every single trade resolves."""
+    """Quick analysis after each trade resolves. Only called once per trade."""
     if not signal or not signal.get("outcome"):
         return
 
-    prompt = f"""You are BTC Oracle's self-training module. Analyze this completed trade:
+    price_change = signal.get('btc_price_at_close', 0) - signal.get('btc_price_at_signal', 0)
 
-Signal: {signal['signal']} @ ${signal.get('btc_price_at_signal', 0):,.2f}
-Close Price: ${signal.get('btc_price_at_close', 0):,.2f}
-Outcome: {signal['outcome']}
+    prompt = f"""Analyze this completed BTC trade in 1-2 sentences:
+
+Signal: {signal['signal']} | Outcome: {signal['outcome']}
+Price: ${signal.get('btc_price_at_signal', 0):,.2f} -> ${signal.get('btc_price_at_close', 0):,.2f} (${price_change:+,.2f})
 Confidence: {signal.get('confidence', 'N/A')}
-RSI: {signal.get('rsi', 'N/A')}
-MACD: {signal.get('macd', 'N/A')}
-Momentum: {signal.get('momentum', 'N/A')}
-Your Reasoning: {signal.get('analysis_notes', 'N/A')[:300]}
+RSI: {signal.get('rsi', 'N/A')} | MACD: {signal.get('macd', 'N/A')} | Momentum: {signal.get('momentum', 'N/A')}
+Bot's reasoning: {(signal.get('analysis_notes', '') or '')[:200]}
 
-Price moved: ${(signal.get('btc_price_at_close', 0) - signal.get('btc_price_at_signal', 0)):+,.2f}
+What specifically caused this {'win' if signal['outcome'] == 'WIN' else 'loss'}? One actionable takeaway.
 
-In 1-2 sentences: What specifically went right or wrong? What's the ONE takeaway?
-
-JSON only: {{"entry_type": "TRADE_REVIEW", "content": "your analysis"}}"""
+JSON: {{"entry_type": "TRADE_REVIEW", "content": "your 1-2 sentence analysis"}}"""
 
     try:
         resp = claude.messages.create(
@@ -61,7 +62,6 @@ JSON only: {{"entry_type": "TRADE_REVIEW", "content": "your analysis"}}"""
         text = resp.content[0].text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        
         try:
             entry = json.loads(text)
         except json.JSONDecodeError:
@@ -71,18 +71,21 @@ JSON only: {{"entry_type": "TRADE_REVIEW", "content": "your analysis"}}"""
             "entry_type": "TRADE_REVIEW",
             "content": entry.get("content", ""),
             "win_rate_at_time": 0,
-            "total_signals_at_time": 0
+            "total_signals_at_time": signal.get("id", 0)
         })
-        print(f"  Trade Review: {entry.get('content', '')[:80]}...")
+        
+        # Mark as reviewed
+        reviewed_signal_ids.add(signal["id"])
+        print(f"  Trade #{signal['id']} Review: {entry.get('content', '')[:80]}...")
         return entry
     except Exception as e:
-        print(f"  Error in trade review: {e}")
+        print(f"  Error reviewing trade #{signal.get('id', '?')}: {e}")
+        reviewed_signal_ids.add(signal.get("id", 0))
         return None
 
 
 def deep_strategy_review():
-    """Every 20 trades: deep dive creating/updating the master strategy document."""
-    # Get all resolved signals
+    """Every 20 trades: comprehensive strategy update."""
     all_signals = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=200")
     if not all_signals:
         return
@@ -91,146 +94,110 @@ def deep_strategy_review():
     if total < 20 or total % 20 != 0:
         return
 
-    print(f"\n  === DEEP STRATEGY REVIEW (every 20 trades) === Signal #{total}")
+    print(f"\n  === DEEP STRATEGY REVIEW === Signal #{total}")
 
-    # Get current strategy
-    current_strategy = get_strategy_document()
+    wins = [s for s in all_signals if s["outcome"] == "WIN"]
+    losses = [s for s in all_signals if s["outcome"] == "LOSS"]
+    win_rate = len(wins) / total * 100
 
-    # Get pattern analysis
-    pattern_summary = get_pattern_summary()
+    # Only analyze recent 50 signals for patterns (avoid old broken data)
+    recent = all_signals[:50]
+    recent_wins = [s for s in recent if s["outcome"] == "WIN"]
+    recent_wr = len(recent_wins) / len(recent) * 100 if recent else 0
+
+    # Find what conditions correlate with actual price going up
+    up_moves = [s for s in recent if s.get("btc_price_at_close") and s.get("btc_price_at_signal") and s["btc_price_at_close"] > s["btc_price_at_signal"]]
+    down_moves = [s for s in recent if s.get("btc_price_at_close") and s.get("btc_price_at_signal") and s["btc_price_at_close"] <= s["btc_price_at_signal"]]
+
+    up_conditions = ""
+    if up_moves:
+        avg_rsi_up = sum(s.get("rsi", 50) or 50 for s in up_moves) / len(up_moves)
+        avg_macd_up = sum(s.get("macd", 0) or 0 for s in up_moves) / len(up_moves)
+        avg_mom_up = sum(s.get("momentum", 0) or 0 for s in up_moves) / len(up_moves)
+        up_conditions = f"When price went UP ({len(up_moves)} times): avg RSI={avg_rsi_up:.1f}, avg MACD={avg_macd_up:.2f}, avg Momentum={avg_mom_up:.2f}"
+
+    down_conditions = ""
+    if down_moves:
+        avg_rsi_dn = sum(s.get("rsi", 50) or 50 for s in down_moves) / len(down_moves)
+        avg_macd_dn = sum(s.get("macd", 0) or 0 for s in down_moves) / len(down_moves)
+        avg_mom_dn = sum(s.get("momentum", 0) or 0 for s in down_moves) / len(down_moves)
+        down_conditions = f"When price went DOWN ({len(down_moves)} times): avg RSI={avg_rsi_dn:.1f}, avg MACD={avg_macd_dn:.2f}, avg Momentum={avg_mom_dn:.2f}"
 
     # Get recent trade reviews
     reviews = db.select("journal", "entry_type=eq.TRADE_REVIEW&order=created_at.desc&limit=20")
-    review_text = ""
-    for r in reviews:
-        review_text += f"  - {r['content']}\n"
-
-    # Build detailed signal breakdown
-    wins = [s for s in all_signals if s["outcome"] == "WIN"]
-    losses = [s for s in all_signals if s["outcome"] == "LOSS"]
-
-    # Analyze winning conditions
-    win_conditions = ""
-    if wins:
-        avg_win_rsi = sum(s.get("rsi", 50) or 50 for s in wins) / len(wins)
-        avg_win_macd = sum(s.get("macd", 0) or 0 for s in wins) / len(wins)
-        avg_win_momentum = sum(s.get("momentum", 0) or 0 for s in wins) / len(wins)
-        avg_win_conf = sum(s.get("confidence", 0.5) or 0.5 for s in wins) / len(wins)
-        up_wins = len([s for s in wins if s["signal"] == "UP"])
-        down_wins = len([s for s in wins if s["signal"] == "DOWN"])
-        win_conditions = f"""
-  Winning trades ({len(wins)}):
-    Avg RSI: {avg_win_rsi:.1f} | Avg MACD: {avg_win_macd:.4f} | Avg Momentum: {avg_win_momentum:.2f}
-    Avg Confidence: {avg_win_conf:.0%}
-    UP wins: {up_wins} | DOWN wins: {down_wins}"""
-
-    # Analyze losing conditions
-    loss_conditions = ""
-    if losses:
-        avg_loss_rsi = sum(s.get("rsi", 50) or 50 for s in losses) / len(losses)
-        avg_loss_macd = sum(s.get("macd", 0) or 0 for s in losses) / len(losses)
-        avg_loss_momentum = sum(s.get("momentum", 0) or 0 for s in losses) / len(losses)
-        avg_loss_conf = sum(s.get("confidence", 0.5) or 0.5 for s in losses) / len(losses)
-        up_losses = len([s for s in losses if s["signal"] == "UP"])
-        down_losses = len([s for s in losses if s["signal"] == "DOWN"])
-        loss_conditions = f"""
-  Losing trades ({len(losses)}):
-    Avg RSI: {avg_loss_rsi:.1f} | Avg MACD: {avg_loss_macd:.4f} | Avg Momentum: {avg_loss_momentum:.2f}
-    Avg Confidence: {avg_loss_conf:.0%}
-    UP losses: {up_losses} | DOWN losses: {down_losses}"""
+    review_text = "\n".join(f"  - {r['content']}" for r in reviews) if reviews else "None"
 
     # Time analysis
-    hour_wins = {}
-    hour_total = {}
-    for s in all_signals:
+    hour_stats = {}
+    for s in recent:
         try:
             hour = datetime.fromisoformat(s["created_at"].replace("Z", "+00:00")).hour
-            hour_total[hour] = hour_total.get(hour, 0) + 1
-            if s["outcome"] == "WIN":
-                hour_wins[hour] = hour_wins.get(hour, 0) + 1
+            if hour not in hour_stats:
+                hour_stats[hour] = {"total": 0, "up": 0}
+            hour_stats[hour]["total"] += 1
+            if s.get("btc_price_at_close") and s.get("btc_price_at_signal") and s["btc_price_at_close"] > s["btc_price_at_signal"]:
+                hour_stats[hour]["up"] += 1
         except:
             pass
 
-    time_analysis = ""
-    if hour_total:
-        best_hour = max(hour_total.keys(), key=lambda h: hour_wins.get(h, 0) / hour_total[h] if hour_total[h] >= 3 else 0)
-        worst_hour = min(hour_total.keys(), key=lambda h: hour_wins.get(h, 0) / hour_total[h] if hour_total[h] >= 3 else 1)
-        time_analysis = f"""
-  Best hour (UTC): {best_hour}:00 ({hour_wins.get(best_hour, 0)}/{hour_total[best_hour]} wins)
-  Worst hour (UTC): {worst_hour}:00 ({hour_wins.get(worst_hour, 0)}/{hour_total[worst_hour]} wins)"""
+    time_text = ""
+    for h in sorted(hour_stats.keys()):
+        if hour_stats[h]["total"] >= 3:
+            up_pct = hour_stats[h]["up"] / hour_stats[h]["total"] * 100
+            time_text += f"  {h}:00 UTC: {up_pct:.0f}% up ({hour_stats[h]['total']} signals)\n"
 
-    prompt = f"""You are BTC Oracle's strategic brain. This is your DEEP STRATEGY REVIEW after {total} trades.
+    prompt = f"""You are BTC Oracle's strategic brain. Write a NEW strategy document after {total} total trades.
 
-=== CURRENT STRATEGY ===
-{current_strategy}
+RECENT PERFORMANCE (last 50): {recent_wr:.1f}% win rate
+OVERALL: {win_rate:.1f}% ({len(wins)}W/{len(losses)}L)
 
-=== PERFORMANCE PATTERNS ===
-{pattern_summary}
+WHAT ACTUALLY PREDICTS PRICE MOVEMENT:
+{up_conditions}
+{down_conditions}
 
-=== WINNING vs LOSING CONDITIONS ===
-{win_conditions}
-{loss_conditions}
+TIME OF DAY PATTERNS:
+{time_text}
 
-=== TIME OF DAY ANALYSIS ===
-{time_analysis}
-
-=== RECENT TRADE REVIEWS (individual learnings) ===
+RECENT TRADE REVIEWS:
 {review_text}
 
-=== YOUR TASK ===
-Write a comprehensive STRATEGY DOCUMENT that will guide all future predictions.
-This replaces your previous strategy. Include:
+Write a CONCISE strategy (5-7 bullet points max). Focus ONLY on:
+1. Which indicators actually predict price direction (based on the data above)
+2. When to signal UP vs DOWN
+3. What conditions to avoid
 
-1. CORE RULES - 3-5 specific rules based on what ACTUALLY works (backed by your data)
-2. AVOID LIST - specific conditions where you consistently lose
-3. SWEET SPOTS - specific conditions where you consistently win
-4. CONFIDENCE CALIBRATION - when to be high vs low confidence
-5. TIME FACTORS - best/worst times to trade
-6. DIRECTION BIAS - any bias toward UP or DOWN based on your stats
-7. KEY INSIGHT - the single most important thing you've learned
+DO NOT reference old rules. Only use the data provided above.
+Keep it under 500 characters total.
 
-Be SPECIFIC with numbers. Reference actual win rates and conditions.
-This document will be fed into every future prediction you make.
-
-JSON only: {{"entry_type": "STRATEGY", "content": "your full strategy document"}}"""
+JSON: {{"entry_type": "STRATEGY", "content": "your strategy"}}"""
 
     try:
         resp = claude.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=1500,
+            max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
         text = resp.content[0].text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        
-        # Try direct JSON parse first
+
         try:
             entry = json.loads(text)
         except json.JSONDecodeError:
-            # If JSON fails, extract content manually
             content = text
             if '"content"' in text:
                 start = text.find('"content"')
                 start = text.find(':', start) + 1
-                # Find the content value
-                content = text[start:].strip()
-                if content.startswith('"'):
-                    content = content[1:]
-                if content.endswith('"}'):
-                    content = content[:-2]
-                elif content.endswith('"'):
-                    content = content[:-1]
-            entry = {"entry_type": "STRATEGY", "content": content}
+                content = text[start:].strip().strip('"').rstrip('"}')
+            entry = {"entry_type": "STRATEGY", "content": content[:2000]}
 
         db.insert("journal", {
             "entry_type": "STRATEGY",
-            "content": entry.get("content", "")[:5000],
-            "win_rate_at_time": len(wins) / total if total > 0 else 0,
+            "content": entry.get("content", "")[:2000],
+            "win_rate_at_time": win_rate / 100,
             "total_signals_at_time": total
         })
-        print(f"\n  STRATEGY UPDATED:")
-        print(f"  {entry.get('content', '')[:200]}...")
+        print(f"  STRATEGY UPDATED: {entry.get('content', '')[:150]}...")
         return entry
     except Exception as e:
         print(f"  Error in deep review: {e}")
@@ -238,13 +205,16 @@ JSON only: {{"entry_type": "STRATEGY", "content": "your full strategy document"}
 
 
 def run_self_training():
-    """Run after each signal cycle - analyze latest trade, deep review every 20."""
+    """Run after each signal cycle."""
     print("  Running self-training...")
 
-    # Always analyze the latest resolved trade
-    latest = get_latest_resolved_signal()
-    if latest:
-        analyze_single_trade(latest)
+    # Review any unreviewed trades (usually 1)
+    unreviewed = get_unreviewed_signals()
+    if unreviewed:
+        for signal in unreviewed[:3]:  # max 3 per cycle
+            analyze_single_trade(signal)
+    else:
+        print("  No new trades to review.")
 
     # Deep strategy review every 20 trades
     all_resolved = db.select("signals", "outcome=not.is.null&select=id")

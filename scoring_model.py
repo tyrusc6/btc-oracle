@@ -1,8 +1,8 @@
 """
-BTC Oracle - Weighted Scoring Model
-Each indicator gets a weight based on historical predictive accuracy.
-Combines all scores into a single numerical signal.
-Updates weights automatically as more data comes in.
+BTC Oracle - Weighted Scoring Model (V2)
+Weights based on how predictive each indicator ACTUALLY is for price direction.
+Only uses recent signals (last 100) to avoid pollution from old broken data.
+Auto-updates every cycle.
 """
 
 import db
@@ -10,98 +10,117 @@ import numpy as np
 
 
 def calculate_indicator_weights():
-    """Analyze past signals to determine how predictive each indicator is."""
-    signals = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=500")
-    if not signals or len(signals) < 20:
+    """Calculate how predictive each indicator condition is for ACTUAL price direction."""
+    # Only use last 100 signals to avoid old broken data
+    signals = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=100")
+    if not signals or len(signals) < 15:
         return get_default_weights()
 
     weights = {}
 
-    # RSI accuracy by condition
-    rsi_oversold = [s for s in signals if s.get("rsi") and s["rsi"] < 30]
-    rsi_overbought = [s for s in signals if s.get("rsi") and s["rsi"] > 70]
-    rsi_neutral = [s for s in signals if s.get("rsi") and 30 <= s["rsi"] <= 70]
+    # For each indicator condition, check: when this condition was true,
+    # did the price ACTUALLY go up or down? (not what the bot predicted)
+    
+    for s in signals:
+        if not s.get("btc_price_at_signal") or not s.get("btc_price_at_close"):
+            continue
+        s["actual_up"] = s["btc_price_at_close"] > s["btc_price_at_signal"]
 
-    if rsi_oversold:
-        # When RSI < 30, how often does UP win?
-        up_wins = len([s for s in rsi_oversold if s["signal"] == "UP" and s["outcome"] == "WIN"])
-        weights["rsi_oversold_up"] = up_wins / len(rsi_oversold) if rsi_oversold else 0.5
-    if rsi_overbought:
-        down_wins = len([s for s in rsi_overbought if s["signal"] == "DOWN" and s["outcome"] == "WIN"])
-        weights["rsi_overbought_down"] = down_wins / len(rsi_overbought) if rsi_overbought else 0.5
+    valid = [s for s in signals if "actual_up" in s]
+    if len(valid) < 15:
+        return get_default_weights()
 
-    # MACD accuracy
-    macd_pos = [s for s in signals if s.get("macd") and s["macd"] > 0]
-    macd_neg = [s for s in signals if s.get("macd") and s["macd"] < 0]
+    # RSI: when oversold, does price go up?
+    rsi_oversold = [s for s in valid if s.get("rsi") and s["rsi"] < 30]
+    rsi_overbought = [s for s in valid if s.get("rsi") and s["rsi"] > 70]
+    rsi_low = [s for s in valid if s.get("rsi") and 30 <= s["rsi"] < 45]
+    rsi_high = [s for s in valid if s.get("rsi") and 55 < s["rsi"] <= 70]
 
-    if macd_pos:
-        up_wins = len([s for s in macd_pos if s["signal"] == "UP" and s["outcome"] == "WIN"])
-        weights["macd_positive_up"] = up_wins / len(macd_pos)
-    if macd_neg:
-        down_wins = len([s for s in macd_neg if s["signal"] == "DOWN" and s["outcome"] == "WIN"])
-        weights["macd_negative_down"] = down_wins / len(macd_neg)
+    if len(rsi_oversold) >= 3:
+        weights["rsi_oversold_predicts_up"] = sum(1 for s in rsi_oversold if s["actual_up"]) / len(rsi_oversold)
+    if len(rsi_overbought) >= 3:
+        weights["rsi_overbought_predicts_down"] = sum(1 for s in rsi_overbought if not s["actual_up"]) / len(rsi_overbought)
+    if len(rsi_low) >= 3:
+        weights["rsi_low_predicts_up"] = sum(1 for s in rsi_low if s["actual_up"]) / len(rsi_low)
+    if len(rsi_high) >= 3:
+        weights["rsi_high_predicts_down"] = sum(1 for s in rsi_high if not s["actual_up"]) / len(rsi_high)
 
-    # Momentum accuracy
-    mom_pos = [s for s in signals if s.get("momentum") and s["momentum"] > 0]
-    mom_neg = [s for s in signals if s.get("momentum") and s["momentum"] < 0]
+    # MACD: when positive, does price go up?
+    macd_pos = [s for s in valid if s.get("macd") and s["macd"] > 0]
+    macd_neg = [s for s in valid if s.get("macd") and s["macd"] < 0]
 
-    if mom_pos:
-        up_wins = len([s for s in mom_pos if s["signal"] == "UP" and s["outcome"] == "WIN"])
-        weights["momentum_positive_up"] = up_wins / len(mom_pos)
-    if mom_neg:
-        down_wins = len([s for s in mom_neg if s["signal"] == "DOWN" and s["outcome"] == "WIN"])
-        weights["momentum_negative_down"] = down_wins / len(mom_neg)
+    if len(macd_pos) >= 3:
+        weights["macd_pos_predicts_up"] = sum(1 for s in macd_pos if s["actual_up"]) / len(macd_pos)
+    if len(macd_neg) >= 3:
+        weights["macd_neg_predicts_down"] = sum(1 for s in macd_neg if not s["actual_up"]) / len(macd_neg)
 
-    # EMA crossover accuracy
-    ema_signals = [s for s in signals if s.get("ema_9") and s.get("ema_21")]
-    if ema_signals:
-        bullish_cross = [s for s in ema_signals if s["ema_9"] > s["ema_21"]]
-        bearish_cross = [s for s in ema_signals if s["ema_9"] <= s["ema_21"]]
-        if bullish_cross:
-            up_wins = len([s for s in bullish_cross if s["signal"] == "UP" and s["outcome"] == "WIN"])
-            weights["ema_bullish_up"] = up_wins / len(bullish_cross)
-        if bearish_cross:
-            down_wins = len([s for s in bearish_cross if s["signal"] == "DOWN" and s["outcome"] == "WIN"])
-            weights["ema_bearish_down"] = down_wins / len(bearish_cross)
+    # MACD histogram
+    hist_pos = [s for s in valid if s.get("macd_histogram") and s["macd_histogram"] > 0]
+    hist_neg = [s for s in valid if s.get("macd_histogram") and s["macd_histogram"] < 0]
 
-    # Overall direction accuracy
-    up_signals = [s for s in signals if s["signal"] == "UP"]
-    down_signals = [s for s in signals if s["signal"] == "DOWN"]
-    if up_signals:
-        weights["overall_up_accuracy"] = len([s for s in up_signals if s["outcome"] == "WIN"]) / len(up_signals)
-    if down_signals:
-        weights["overall_down_accuracy"] = len([s for s in down_signals if s["outcome"] == "WIN"]) / len(down_signals)
+    if len(hist_pos) >= 3:
+        weights["hist_pos_predicts_up"] = sum(1 for s in hist_pos if s["actual_up"]) / len(hist_pos)
+    if len(hist_neg) >= 3:
+        weights["hist_neg_predicts_down"] = sum(1 for s in hist_neg if not s["actual_up"]) / len(hist_neg)
+
+    # Momentum
+    mom_pos = [s for s in valid if s.get("momentum") and s["momentum"] > 0]
+    mom_neg = [s for s in valid if s.get("momentum") and s["momentum"] < 0]
+
+    if len(mom_pos) >= 3:
+        weights["mom_pos_predicts_up"] = sum(1 for s in mom_pos if s["actual_up"]) / len(mom_pos)
+    if len(mom_neg) >= 3:
+        weights["mom_neg_predicts_down"] = sum(1 for s in mom_neg if not s["actual_up"]) / len(mom_neg)
+
+    # EMA crossover
+    ema_bull = [s for s in valid if s.get("ema_9") and s.get("ema_21") and s["ema_9"] > s["ema_21"]]
+    ema_bear = [s for s in valid if s.get("ema_9") and s.get("ema_21") and s["ema_9"] <= s["ema_21"]]
+
+    if len(ema_bull) >= 3:
+        weights["ema_bull_predicts_up"] = sum(1 for s in ema_bull if s["actual_up"]) / len(ema_bull)
+    if len(ema_bear) >= 3:
+        weights["ema_bear_predicts_down"] = sum(1 for s in ema_bear if not s["actual_up"]) / len(ema_bear)
+
+    # Overall: how often does price go up vs down?
+    weights["base_up_rate"] = sum(1 for s in valid if s["actual_up"]) / len(valid)
+
+    # Print weights for debugging
+    print(f"  Learned weights ({len(valid)} signals):")
+    for k, v in weights.items():
+        print(f"    {k}: {v:.1%}")
 
     return weights
 
 
 def get_default_weights():
-    """Default weights before we have enough data."""
     return {
-        "rsi_oversold_up": 0.55,
-        "rsi_overbought_down": 0.55,
-        "macd_positive_up": 0.52,
-        "macd_negative_down": 0.52,
-        "momentum_positive_up": 0.53,
-        "momentum_negative_down": 0.53,
-        "ema_bullish_up": 0.52,
-        "ema_bearish_down": 0.52,
-        "overall_up_accuracy": 0.50,
-        "overall_down_accuracy": 0.50,
+        "rsi_oversold_predicts_up": 0.55,
+        "rsi_overbought_predicts_down": 0.55,
+        "rsi_low_predicts_up": 0.52,
+        "rsi_high_predicts_down": 0.52,
+        "macd_pos_predicts_up": 0.52,
+        "macd_neg_predicts_down": 0.52,
+        "hist_pos_predicts_up": 0.53,
+        "hist_neg_predicts_down": 0.53,
+        "mom_pos_predicts_up": 0.55,
+        "mom_neg_predicts_down": 0.55,
+        "ema_bull_predicts_up": 0.53,
+        "ema_bear_predicts_down": 0.53,
+        "base_up_rate": 0.50,
     }
 
 
 def score_signal(indicators, market_data=None):
     """
-    Generate a numerical score from -1.0 (strong DOWN) to +1.0 (strong UP).
-    Each indicator contributes a weighted vote.
+    Generate a score from -1.0 (strong DOWN) to +1.0 (strong UP).
+    Uses learned weights based on actual price movements.
     """
     weights = calculate_indicator_weights()
-    votes = []  # list of (direction_score, weight) where direction is -1 or +1
+    votes = []
 
     price = indicators.get("current_price", 0)
 
-    # TREND - highest weight signal (don't fight the trend!)
+    # TREND - highest weight (don't fight the trend)
     trend_1m = indicators.get("trend_1m")
     trend_5m = indicators.get("trend_5m")
     if trend_1m == "STRONG_UPTREND":
@@ -114,7 +133,7 @@ def score_signal(indicators, market_data=None):
         votes.append((-1, 1.0))
 
     if trend_5m == "STRONG_UPTREND":
-        votes.append((+1, 1.8))  # 5-min trend gets even more weight
+        votes.append((+1, 1.8))
     elif trend_5m == "UPTREND":
         votes.append((+1, 1.2))
     elif trend_5m == "STRONG_DOWNTREND":
@@ -122,56 +141,69 @@ def score_signal(indicators, market_data=None):
     elif trend_5m == "DOWNTREND":
         votes.append((-1, 1.2))
 
-    # RSI signal
+    # RSI - use learned predictive power
     rsi = indicators.get("rsi")
     if rsi is not None:
         if rsi < 30:
-            votes.append((+1, weights.get("rsi_oversold_up", 0.55) * 1.5))  # oversold = likely bounce
+            w = weights.get("rsi_oversold_predicts_up", 0.55)
+            votes.append((+1, w * 1.5))
         elif rsi > 70:
-            votes.append((-1, weights.get("rsi_overbought_down", 0.55) * 1.5))
+            w = weights.get("rsi_overbought_predicts_down", 0.55)
+            votes.append((-1, w * 1.5))
         elif rsi < 45:
-            votes.append((+1, 0.3))
+            w = weights.get("rsi_low_predicts_up", 0.52)
+            votes.append((+1, w * 0.7))
         elif rsi > 55:
-            votes.append((-1, 0.3))
+            w = weights.get("rsi_high_predicts_down", 0.52)
+            votes.append((-1, w * 0.7))
 
-    # MACD signal
+    # MACD
     macd = indicators.get("macd")
-    macd_hist = indicators.get("macd_histogram")
     if macd is not None:
         if macd > 0:
-            votes.append((+1, weights.get("macd_positive_up", 0.52)))
+            w = weights.get("macd_pos_predicts_up", 0.52)
+            votes.append((+1, w))
         else:
-            votes.append((-1, weights.get("macd_negative_down", 0.52)))
+            w = weights.get("macd_neg_predicts_down", 0.52)
+            votes.append((-1, w))
+
+    macd_hist = indicators.get("macd_histogram")
     if macd_hist is not None:
         if macd_hist > 0:
-            votes.append((+1, 0.4))
+            w = weights.get("hist_pos_predicts_up", 0.53)
+            votes.append((+1, w))
         else:
-            votes.append((-1, 0.4))
+            w = weights.get("hist_neg_predicts_down", 0.53)
+            votes.append((-1, w))
 
     # Momentum
     momentum = indicators.get("momentum")
     if momentum is not None:
         if momentum > 0:
-            votes.append((+1, weights.get("momentum_positive_up", 0.53)))
+            w = weights.get("mom_pos_predicts_up", 0.55)
+            votes.append((+1, w))
         else:
-            votes.append((-1, weights.get("momentum_negative_down", 0.53)))
+            w = weights.get("mom_neg_predicts_down", 0.55)
+            votes.append((-1, w))
 
     # EMA crossover
     ema_9 = indicators.get("ema_9")
     ema_21 = indicators.get("ema_21")
     if ema_9 and ema_21:
         if ema_9 > ema_21:
-            votes.append((+1, weights.get("ema_bullish_up", 0.52)))
+            w = weights.get("ema_bull_predicts_up", 0.53)
+            votes.append((+1, w))
         else:
-            votes.append((-1, weights.get("ema_bearish_down", 0.52)))
+            w = weights.get("ema_bear_predicts_down", 0.53)
+            votes.append((-1, w))
 
     # Bollinger Band position
     bb_pos = indicators.get("bollinger_position")
     if bb_pos is not None:
         if bb_pos < 0.2:
-            votes.append((+1, 0.6))  # near lower band = bounce likely
+            votes.append((+1, 0.6))
         elif bb_pos > 0.8:
-            votes.append((-1, 0.6))  # near upper band = pullback likely
+            votes.append((-1, 0.6))
         elif bb_pos < 0.4:
             votes.append((+1, 0.3))
         elif bb_pos > 0.6:
@@ -185,14 +217,14 @@ def score_signal(indicators, market_data=None):
         else:
             votes.append((-1, 0.4))
 
-    # OBV trend
+    # OBV
     obv = indicators.get("obv_trend")
     if obv == "RISING":
         votes.append((+1, 0.5))
     elif obv == "FALLING":
         votes.append((-1, 0.5))
 
-    # Stochastic RSI
+    # StochRSI
     stoch_k = indicators.get("stoch_rsi_k")
     if stoch_k is not None:
         if stoch_k < 20:
@@ -200,7 +232,7 @@ def score_signal(indicators, market_data=None):
         elif stoch_k > 80:
             votes.append((-1, 0.6))
 
-    # Rate of change
+    # ROC
     roc = indicators.get("rate_of_change")
     if roc is not None:
         if roc > 0.1:
@@ -208,30 +240,26 @@ def score_signal(indicators, market_data=None):
         elif roc < -0.1:
             votes.append((-1, 0.4))
 
-    # Market data signals
+    # Market data
     if market_data:
-        # Order book imbalance
         ob_signal = market_data.get("orderbook_imbalance_signal")
         if ob_signal == "BUY_PRESSURE":
             votes.append((+1, 0.7))
         elif ob_signal == "SELL_PRESSURE":
             votes.append((-1, 0.7))
 
-        # Trade flow
         tf_signal = market_data.get("trade_flow_signal")
         if tf_signal == "BUYING":
             votes.append((+1, 0.7))
         elif tf_signal == "SELLING":
             votes.append((-1, 0.7))
 
-        # Whale activity
         whale = market_data.get("trade_flow_whale_signal")
         if whale == "WHALE_BUYING":
             votes.append((+1, 0.8))
         elif whale == "WHALE_SELLING":
             votes.append((-1, 0.8))
 
-        # Momentum alignment
         alignment = market_data.get("momentum_alignment")
         if alignment == "STRONG_BULL":
             votes.append((+1, 0.9))
@@ -242,13 +270,6 @@ def score_signal(indicators, market_data=None):
         elif alignment == "MIXED_BEAR":
             votes.append((-1, 0.4))
 
-        # Volatility regime
-        vol_regime = market_data.get("volatility_regime")
-        if vol_regime == "HIGH":
-            # In high vol, signals are less reliable - reduce all weights
-            pass  # handled by confidence later
-
-    # Calculate weighted score
     if not votes:
         return 0.0, 0.5, "NO_DATA"
 
@@ -257,16 +278,12 @@ def score_signal(indicators, market_data=None):
         return 0.0, 0.5, "NO_DATA"
 
     weighted_sum = sum(direction * weight for direction, weight in votes)
-    score = weighted_sum / total_weight  # -1 to +1
+    score = weighted_sum / total_weight
 
-    # Convert to signal
     signal = "UP" if score > 0 else "DOWN"
-
-    # Confidence based on agreement strength
     agreement = abs(score)
     confidence = min(0.95, 0.5 + agreement * 0.45)
 
-    # Reduce confidence in high volatility
     if market_data and market_data.get("volatility_regime") == "HIGH":
         confidence *= 0.85
 
@@ -274,20 +291,16 @@ def score_signal(indicators, market_data=None):
 
 
 def get_scoring_summary(indicators, market_data=None):
-    """Get a readable summary of the scoring model output."""
     score, confidence, signal = score_signal(indicators, market_data)
     weights = calculate_indicator_weights()
-
     summary = f"Score: {score:+.3f} | Signal: {signal} | Confidence: {confidence:.0%}\n"
-    summary += "Indicator weights (from history):\n"
+    summary += "Learned weights:\n"
     for k, v in weights.items():
         summary += f"  {k}: {v:.1%}\n"
-
     return summary
 
 
 if __name__ == "__main__":
-    print("Scoring model - needs indicators to run.")
     weights = calculate_indicator_weights()
     print("Current weights:")
     for k, v in weights.items():
