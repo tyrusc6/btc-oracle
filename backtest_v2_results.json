@@ -655,7 +655,7 @@
     {
       "index": 719,
       "price": 71125.2,
-      "next_price": 71200.0,
+      "next_price": 71178.5,
       "signal": "DOWN",
       "score": -0.5479,
       "confidence": 0.747,
@@ -663,7 +663,7 @@
       "regime": "RANGING",
       "traded": false,
       "outcome": "LOSS",
-      "change": 74.80000000000291
+      "change": 53.30000000000291
     }
   ]
 }
