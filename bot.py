@@ -1,5 +1,6 @@
 """
-BTC Oracle V3 - Production Grade
+BTC Oracle V4 - Professional Grade
+Regime detection, WAIT signal filter, shadow mode, feature importance
 """
 
 import os
@@ -18,6 +19,8 @@ from self_trainer import run_self_training
 from scoring_model import score_signal
 from advanced_metrics import get_metrics_summary
 from kalshi_odds import get_kalshi_btc_contracts, analyze_edge
+from regime_detector import detect_regime
+from signal_filter import should_trade, get_feature_importance_summary
 
 load_dotenv()
 
@@ -39,7 +42,6 @@ def get_trade_reviews(limit=5):
     return "\n".join(f"  - {r.get('content', '')}" for r in data) if data else "No trade reviews yet."
 
 def get_current_btc_price():
-    """Get current price directly from Kraken API."""
     try:
         resp = requests.get("https://api.kraken.com/0/public/Ticker?pair=XBTUSD", timeout=10)
         data = resp.json()
@@ -52,7 +54,8 @@ def get_current_btc_price():
 
 def ask_claude_for_signal(indicators, market_data, news_data, correlated_data,
                           metrics_summary, scoring_output, trade_reviews,
-                          kalshi_data, edge_analysis, past_signals, performance):
+                          kalshi_data, edge_analysis, regime_data, feature_summary,
+                          past_signals, performance):
 
     past_text = ""
     if past_signals:
@@ -69,21 +72,28 @@ def ask_claude_for_signal(indicators, market_data, news_data, correlated_data,
     market_text = "\n".join(f"  {k}: {v}" for k, v in market_data.items()) if market_data else "  No data"
     news_text = "\n".join(f"  {k}: {v}" for k, v in news_data.items() if "headline" not in k.lower()) if news_data else "  No data"
     correlated_text = "\n".join(f"  {k}: {v}" for k, v in correlated_data.items()) if correlated_data else "  No data"
+    regime_text = "\n".join(f"  {k}: {v}" for k, v in regime_data.items()) if regime_data else "  Unknown"
 
     kalshi_text = "Not available"
     if kalshi_data:
         kalshi_text = f"Market expects: {kalshi_data.get('kalshi_market_expects', '?')} ({kalshi_data.get('kalshi_market_confidence', 0)}%)"
     edge_text = f"Edge: {edge_analysis.get('edge_type', '?')} ({edge_analysis.get('edge_strength', '?')})" if edge_analysis else ""
 
-    prompt = f"""You are BTC Oracle V3. The scoring model gives a calibrated numerical signal.
-You should AGREE with it unless order book or breaking news STRONGLY contradicts.
+    prompt = f"""You are BTC Oracle V4. The scoring model gives a calibrated signal.
+You should AGREE unless order book or news STRONGLY contradicts.
 
 === SCORING MODEL (follow this) ===
 {scoring_output}
 
+=== MARKET REGIME ===
+{regime_text}
+
 === KALSHI ODDS ===
 {kalshi_text}
 {edge_text}
+
+=== FEATURE IMPORTANCE (which indicators actually predict price) ===
+{feature_summary}
 
 === INDICATORS ===
   Price: ${indicators['current_price']:,.2f} | RSI: {indicators.get('rsi', 'N/A')} | StochRSI: {indicators.get('stoch_rsi_k', 'N/A')}
@@ -91,12 +101,13 @@ You should AGREE with it unless order book or breaking news STRONGLY contradicts
   BB Pos: {indicators.get('bollinger_position', 'N/A')} | EMA Cross: {indicators.get('ema_crossover', 'N/A')}
   Mom: {indicators.get('momentum', 'N/A')} | ROC: {indicators.get('rate_of_change', 'N/A')}%
   VWAP: {indicators.get('price_vs_vwap', 'N/A')} | OBV: {indicators.get('obv_trend', 'N/A')} | ATR: {indicators.get('atr', 'N/A')}
-  TREND 1m: {indicators.get('trend_1m', 'N/A')} | TREND 5m: {indicators.get('trend_5m', 'N/A')} | Chg: {indicators.get('trend_pct_change', 'N/A')}%
+  TREND 1m: {indicators.get('trend_1m', 'N/A')} | TREND 5m: {indicators.get('trend_5m', 'N/A')}
 
 ABSOLUTE RULES:
-1. NEVER fight the trend. Both trends UP = signal UP. Both DOWN = signal DOWN. No exceptions.
-2. Trust the scoring model. Only override with STRONG order book / news evidence.
-3. If scoring model confidence > 70%, AGREE with it.
+1. NEVER fight the trend. Both UP = signal UP. Both DOWN = signal DOWN.
+2. Trust the scoring model. Only override with STRONG evidence.
+3. Adapt to the REGIME. Trending = follow trend. Ranging = fade extremes.
+4. Weight features by their IMPORTANCE scores above.
 
 === ORDER BOOK & TRADE FLOW ===
 {market_text}
@@ -118,7 +129,6 @@ ABSOLUTE RULES:
 
 === PERFORMANCE === {perf_text}
 
-LEARNING MODE: Always UP or DOWN.
 JSON only: {{"signal": "UP" or "DOWN", "confidence": 0.0 to 1.0, "reasoning": "brief"}}"""
 
     try:
@@ -140,7 +150,7 @@ JSON only: {{"signal": "UP" or "DOWN", "confidence": 0.0 to 1.0, "reasoning": "b
             return {"signal": "UP", "confidence": 0.5, "reasoning": f"Error: {e}"}
 
 
-def log_signal(signal_data, indicators):
+def log_signal(signal_data, indicators, traded):
     record = {
         "signal": signal_data["signal"],
         "confidence": signal_data["confidence"],
@@ -158,14 +168,14 @@ def log_signal(signal_data, indicators):
         "ema_21": indicators.get("ema_21"),
         "sma_50": indicators.get("sma_50"),
         "vwap": indicators.get("vwap"),
-        "analysis_notes": signal_data.get("reasoning", "")
+        "analysis_notes": f"[{'TRADE' if traded else 'WAIT'}] {signal_data.get('reasoning', '')}"
     }
     db.insert("signals", record)
-    print(f"  Signal logged: {signal_data['signal']} ({signal_data['confidence']:.0%})")
+    status = "TRADE" if traded else "WAIT (logged but not traded)"
+    print(f"  {status}: {signal_data['signal']} ({signal_data['confidence']:.0%})")
 
 
 def check_previous_signals():
-    """Check signals from ~15 min ago using Kraken for accurate current price."""
     cutoff_start = (datetime.now(timezone.utc) - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     cutoff_end = (datetime.now(timezone.utc) - timedelta(minutes=14)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     signals = db.select("signals", f"outcome=is.null&created_at=gte.{cutoff_start}&created_at=lte.{cutoff_end}")
@@ -174,7 +184,7 @@ def check_previous_signals():
 
     current_price = get_current_btc_price()
     if not current_price:
-        print("  Could not get current price from Kraken")
+        print("  Could not get current price")
         return
 
     for signal in signals:
@@ -212,55 +222,76 @@ def update_performance():
 
 def run_signal_cycle():
     print("\n" + "=" * 60)
-    print(f"BTC ORACLE V3 | {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    print(f"BTC ORACLE V4 | {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print("=" * 60)
 
-    print("\n[1/10] Checking previous signals...")
+    print("\n[1/12] Checking previous signals...")
     check_previous_signals()
 
-    print("\n[2/10] Updating performance...")
+    print("\n[2/12] Updating performance...")
     update_performance()
 
-    print("\n[3/10] Self-training...")
+    print("\n[3/12] Self-training...")
     run_self_training()
 
-    print("\n[4/10] Technical indicators...")
+    print("\n[4/12] Technical indicators...")
     indicators = get_all_indicators()
     if not indicators:
         print("  Not enough data.")
         return
 
-    print("\n[5/10] Market data...")
+    print("\n[5/12] Market regime...")
+    regime_data = detect_regime()
+    print(f"  Regime: {regime_data.get('regime', '?')} | Trend strength: {regime_data.get('trend_strength', '?')} | Vol: {regime_data.get('volatility_pct', '?')}%")
+
+    print("\n[6/12] Market data...")
     market_data = get_all_market_data()
 
-    print("\n[6/10] News & sentiment...")
+    print("\n[7/12] News & sentiment...")
     news_data = analyze_news_sentiment()
 
-    print("\n[7/10] Correlated assets...")
+    print("\n[8/12] Correlated assets...")
     correlated_data = get_all_correlated_data()
 
-    print("\n[8/10] Scoring model...")
+    print("\n[9/12] Scoring model...")
     score, score_conf, score_dir = score_signal(indicators, market_data)
     scoring_output = f"Score: {score:+.3f} | Signal: {score_dir} | Confidence: {score_conf:.0%}"
     print(f"  {scoring_output}")
 
-    print("\n[9/10] Kalshi odds...")
+    print("\n[10/12] Kalshi odds...")
     kalshi_data = get_kalshi_btc_contracts()
     edge = analyze_edge(score_dir, score_conf, kalshi_data) if kalshi_data else {}
     print(f"  {kalshi_data.get('kalshi_market_expects', 'No data')}" if kalshi_data else "  No Kalshi data")
 
-    print("\n[10/10] Claude V3...")
+    print("\n[11/12] Feature importance...")
+    feature_summary = get_feature_importance_summary()
+    print(f"  {feature_summary[:100]}...")
+
+    print("\n[12/12] Claude V4...")
     signal_data = ask_claude_for_signal(
         indicators, market_data, news_data, correlated_data,
         get_metrics_summary(), scoring_output, get_trade_reviews(5),
-        kalshi_data, edge, get_past_signals(15), get_performance_stats()
+        kalshi_data, edge, regime_data, feature_summary,
+        get_past_signals(15), get_performance_stats()
+    )
+
+    # SIGNAL FILTER - should we trade or wait?
+    trade, filter_reason, adjusted_conf = should_trade(
+        score, score_conf, signal_data["signal"], signal_data["confidence"],
+        regime_data, indicators, market_data
     )
 
     print(f"\n  >>> SIGNAL: {signal_data['signal']} ({signal_data['confidence']:.0%})")
     print(f"  >>> Model: {score_dir} | Claude: {signal_data['signal']} | {'AGREE' if score_dir == signal_data['signal'] else 'OVERRIDE'}")
+    print(f"  >>> Regime: {regime_data.get('regime', '?')}")
+    print(f"  >>> Filter: {'TRADE' if trade else 'WAIT'} | {filter_reason}")
     print(f"  >>> {signal_data.get('reasoning', '')[:150]}...")
 
-    log_signal(signal_data, indicators)
+    # Log signal (mark whether it was traded or waited)
+    if trade:
+        signal_data["confidence"] = adjusted_conf
+    log_signal(signal_data, indicators, trade)
+
     print("\nCycle complete.")
 
 
