@@ -60,8 +60,12 @@ JSON only: {{"entry_type": "TRADE_REVIEW", "content": "your analysis"}}"""
         )
         text = resp.content[0].text.strip()
         if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-        entry = json.loads(text)
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        
+        try:
+            entry = json.loads(text)
+        except json.JSONDecodeError:
+            entry = {"entry_type": "TRADE_REVIEW", "content": text[:500]}
 
         db.insert("journal", {
             "entry_type": "TRADE_REVIEW",
@@ -198,12 +202,30 @@ JSON only: {{"entry_type": "STRATEGY", "content": "your full strategy document"}
         )
         text = resp.content[0].text.strip()
         if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-        entry = json.loads(text)
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        
+        # Try direct JSON parse first
+        try:
+            entry = json.loads(text)
+        except json.JSONDecodeError:
+            # If JSON fails, extract content manually
+            content = text
+            if '"content"' in text:
+                start = text.find('"content"')
+                start = text.find(':', start) + 1
+                # Find the content value
+                content = text[start:].strip()
+                if content.startswith('"'):
+                    content = content[1:]
+                if content.endswith('"}'):
+                    content = content[:-2]
+                elif content.endswith('"'):
+                    content = content[:-1]
+            entry = {"entry_type": "STRATEGY", "content": content}
 
         db.insert("journal", {
             "entry_type": "STRATEGY",
-            "content": entry.get("content", ""),
+            "content": entry.get("content", "")[:5000],
             "win_rate_at_time": len(wins) / total if total > 0 else 0,
             "total_signals_at_time": total
         })

@@ -72,24 +72,18 @@ def ask_claude_for_signal(indicators, market_data, news_data, correlated_data,
     if edge_analysis:
         edge_text = f"Edge: {edge_analysis.get('edge_type', '?')} - {edge_analysis.get('edge_description', '')} (Strength: {edge_analysis.get('edge_strength', '?')})"
 
-    prompt = f"""You are BTC Oracle V3. You have a scoring model AND your own analysis.
-The scoring model gives a numerical recommendation. You can AGREE or OVERRIDE it with reasoning.
+    prompt = f"""You are BTC Oracle V3. You have a scoring model that weights all indicators numerically.
 
-=== SCORING MODEL OUTPUT ===
+IMPORTANT: The scoring model has been calibrated with trend detection and indicator weights.
+You should AGREE with the scoring model in most cases. Only override if you have VERY strong
+reason from order book, news, or trade flow data that contradicts it.
+
+=== SCORING MODEL OUTPUT (follow this unless you have strong reason not to) ===
 {scoring_output}
 
 === KALSHI MARKET ODDS ===
 {kalshi_text}
 {edge_text}
-
-=== YOUR STRATEGY DOCUMENT ===
-{strategy_doc}
-
-=== ADVANCED METRICS ===
-{metrics_summary}
-
-=== RECENT TRADE REVIEWS ===
-{trade_reviews}
 
 === TECHNICAL INDICATORS ===
   Price: ${indicators['current_price']:,.2f} | RSI: {indicators.get('rsi', 'N/A')} | StochRSI K: {indicators.get('stoch_rsi_k', 'N/A')}
@@ -99,7 +93,11 @@ The scoring model gives a numerical recommendation. You can AGREE or OVERRIDE it
   VWAP: {indicators.get('price_vs_vwap', 'N/A')} | OBV: {indicators.get('obv_trend', 'N/A')} | ATR: {indicators.get('atr', 'N/A')}
   TREND 1-MIN: {indicators.get('trend_1m', 'N/A')} | TREND 5-MIN: {indicators.get('trend_5m', 'N/A')} | Trend Change: {indicators.get('trend_pct_change', 'N/A')}%
 
-CRITICAL RULE: DO NOT fight the trend. If both 1-min and 5-min trends point the same direction, your signal MUST match unless you have overwhelming contrary evidence.
+ABSOLUTE RULE #1: NEVER fight the trend. If TREND 1-MIN and TREND 5-MIN both say UPTREND or STRONG_UPTREND, you MUST signal UP. If both say DOWNTREND or STRONG_DOWNTREND, you MUST signal DOWN. No exceptions.
+
+ABSOLUTE RULE #2: The scoring model already factors in all indicators with learned weights. Only override it if live order book or breaking news STRONGLY contradicts it.
+
+ABSOLUTE RULE #3: IGNORE any strategy document rules that were learned from bad data. The indicators have been recalibrated. Trust the scoring model and trend detection.
 
 === ORDER BOOK & TRADE FLOW ===
 {market_text}
@@ -110,27 +108,25 @@ CRITICAL RULE: DO NOT fight the trend. If both 1-min and 5-min trends point the 
 === CORRELATED ASSETS ===
 {correlated_text}
 
-=== PATTERN ANALYSIS & COMBOS ===
-{pattern_summary}
+=== ADVANCED METRICS ===
+{metrics_summary}
+
+=== RECENT TRADE REVIEWS ===
+{trade_reviews}
 
 === PAST SIGNALS ===
 {past_text}
 
 === PERFORMANCE === {perf_text}
 
-=== DECISION RULES ===
-1. Start with the scoring model recommendation
-2. Check Kalshi odds - contrarian signals with high bot confidence = strongest edge
-3. Check your strategy document rules
-4. Verify with order book/trade flow (most immediate signal)
-5. News can override everything if breaking
-6. Check your combo analysis - only trade combos that historically win
-7. If scoring model and your analysis DISAGREE, explain why you're overriding
-
-LEARNING MODE: Always UP or DOWN. No WAIT yet.
+RULES:
+- AGREE with scoring model unless order book/news STRONGLY contradicts
+- NEVER fight the trend direction
+- If both trends are UP, signal UP. If both DOWN, signal DOWN. Period.
+- LEARNING MODE: Always UP or DOWN.
 
 JSON only:
-{{"signal": "UP" or "DOWN", "confidence": 0.0 to 1.0, "reasoning": "analysis referencing scoring model, Kalshi odds, and key data"}}"""
+{{"signal": "UP" or "DOWN", "confidence": 0.0 to 1.0, "reasoning": "brief analysis"}}"""
 
     try:
         response = claude.messages.create(
