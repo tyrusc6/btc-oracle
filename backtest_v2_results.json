@@ -1,35 +1,22 @@
 {
   "all": {
     "total": 670,
-    "wins": 302,
-    "win_rate": 45.07
+    "wins": 304,
+    "win_rate": 45.37
   },
   "trades": {
-    "total": 379,
-    "wins": 179,
-    "win_rate": 47.23
+    "total": 115,
+    "wins": 57,
+    "win_rate": 49.57
   },
   "waits": {
-    "total": 291,
-    "wins": 123,
-    "win_rate": 42.27
+    "total": 555,
+    "wins": 247,
+    "win_rate": 44.5
   },
   "results": [
     {
       "index": 670,
-      "price": 71844.0,
-      "next_price": 71895.0,
-      "signal": "UP",
-      "score": 0.75,
-      "confidence": 0.838,
-      "trend": "STRONG_UPTREND",
-      "regime": "WEAK_UPTREND",
-      "traded": true,
-      "outcome": "WIN",
-      "change": 51.0
-    },
-    {
-      "index": 671,
       "price": 71895.0,
       "next_price": 72017.7,
       "signal": "UP",
@@ -37,12 +24,12 @@
       "confidence": 0.838,
       "trend": "STRONG_UPTREND",
       "regime": "WEAK_UPTREND",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 122.69999999999709
     },
     {
-      "index": 672,
+      "index": 671,
       "price": 72017.7,
       "next_price": 72258.2,
       "signal": "UP",
@@ -50,12 +37,12 @@
       "confidence": 0.838,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 240.5
     },
     {
-      "index": 673,
+      "index": 672,
       "price": 72258.2,
       "next_price": 72368.5,
       "signal": "UP",
@@ -63,12 +50,12 @@
       "confidence": 0.793,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 110.30000000000291
     },
     {
-      "index": 674,
+      "index": 673,
       "price": 72368.5,
       "next_price": 72516.6,
       "signal": "UP",
@@ -76,12 +63,12 @@
       "confidence": 0.793,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 148.10000000000582
     },
     {
-      "index": 675,
+      "index": 674,
       "price": 72516.6,
       "next_price": 72471.6,
       "signal": "UP",
@@ -89,12 +76,12 @@
       "confidence": 0.793,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "LOSS",
       "change": -45.0
     },
     {
-      "index": 676,
+      "index": 675,
       "price": 72471.6,
       "next_price": 72314.9,
       "signal": "UP",
@@ -102,12 +89,12 @@
       "confidence": 0.793,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "LOSS",
       "change": -156.70000000001164
     },
     {
-      "index": 677,
+      "index": 676,
       "price": 72314.9,
       "next_price": 72351.3,
       "signal": "UP",
@@ -115,12 +102,12 @@
       "confidence": 0.838,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 36.40000000000873
     },
     {
-      "index": 678,
+      "index": 677,
       "price": 72351.3,
       "next_price": 72326.5,
       "signal": "UP",
@@ -128,12 +115,12 @@
       "confidence": 0.838,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "LOSS",
       "change": -24.80000000000291
     },
     {
-      "index": 679,
+      "index": 678,
       "price": 72326.5,
       "next_price": 72242.1,
       "signal": "UP",
@@ -146,7 +133,7 @@
       "change": -84.39999999999418
     },
     {
-      "index": 680,
+      "index": 679,
       "price": 72242.1,
       "next_price": 72425.4,
       "signal": "UP",
@@ -159,7 +146,7 @@
       "change": 183.29999999998836
     },
     {
-      "index": 681,
+      "index": 680,
       "price": 72425.4,
       "next_price": 72411.9,
       "signal": "UP",
@@ -172,7 +159,7 @@
       "change": -13.5
     },
     {
-      "index": 682,
+      "index": 681,
       "price": 72411.9,
       "next_price": 72365.0,
       "signal": "UP",
@@ -185,7 +172,7 @@
       "change": -46.89999999999418
     },
     {
-      "index": 683,
+      "index": 682,
       "price": 72365.0,
       "next_price": 72790.7,
       "signal": "UP",
@@ -198,7 +185,7 @@
       "change": 425.6999999999971
     },
     {
-      "index": 684,
+      "index": 683,
       "price": 72790.7,
       "next_price": 72828.5,
       "signal": "UP",
@@ -206,12 +193,12 @@
       "confidence": 0.738,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 37.80000000000291
     },
     {
-      "index": 685,
+      "index": 684,
       "price": 72828.5,
       "next_price": 73060.5,
       "signal": "UP",
@@ -219,12 +206,12 @@
       "confidence": 0.738,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 232.0
     },
     {
-      "index": 686,
+      "index": 685,
       "price": 73060.5,
       "next_price": 73289.1,
       "signal": "UP",
@@ -232,12 +219,12 @@
       "confidence": 0.738,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 228.60000000000582
     },
     {
-      "index": 687,
+      "index": 686,
       "price": 73289.1,
       "next_price": 73406.1,
       "signal": "UP",
@@ -245,12 +232,12 @@
       "confidence": 0.738,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 117.0
     },
     {
-      "index": 688,
+      "index": 687,
       "price": 73406.1,
       "next_price": 73538.4,
       "signal": "UP",
@@ -258,12 +245,12 @@
       "confidence": 0.793,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 132.29999999998836
     },
     {
-      "index": 689,
+      "index": 688,
       "price": 73538.4,
       "next_price": 73775.4,
       "signal": "UP",
@@ -271,12 +258,12 @@
       "confidence": 0.793,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": 237.0
     },
     {
-      "index": 690,
+      "index": 689,
       "price": 73775.4,
       "next_price": 72970.2,
       "signal": "UP",
@@ -284,12 +271,12 @@
       "confidence": 0.793,
       "trend": "STRONG_UPTREND",
       "regime": "TRENDING_UP",
-      "traded": true,
+      "traded": false,
       "outcome": "LOSS",
       "change": -805.1999999999971
     },
     {
-      "index": 691,
+      "index": 690,
       "price": 72970.2,
       "next_price": 72399.6,
       "signal": "UP",
@@ -302,7 +289,7 @@
       "change": -570.5999999999913
     },
     {
-      "index": 692,
+      "index": 691,
       "price": 72399.6,
       "next_price": 72662.5,
       "signal": "UP",
@@ -315,7 +302,7 @@
       "change": 262.8999999999942
     },
     {
-      "index": 693,
+      "index": 692,
       "price": 72662.5,
       "next_price": 72500.4,
       "signal": "UP",
@@ -328,7 +315,7 @@
       "change": -162.10000000000582
     },
     {
-      "index": 694,
+      "index": 693,
       "price": 72500.4,
       "next_price": 71986.5,
       "signal": "UP",
@@ -341,7 +328,7 @@
       "change": -513.8999999999942
     },
     {
-      "index": 695,
+      "index": 694,
       "price": 71986.5,
       "next_price": 71860.1,
       "signal": "DOWN",
@@ -354,7 +341,7 @@
       "change": -126.39999999999418
     },
     {
-      "index": 696,
+      "index": 695,
       "price": 71860.1,
       "next_price": 71721.3,
       "signal": "DOWN",
@@ -367,7 +354,7 @@
       "change": -138.8000000000029
     },
     {
-      "index": 697,
+      "index": 696,
       "price": 71721.3,
       "next_price": 71389.5,
       "signal": "DOWN",
@@ -380,7 +367,7 @@
       "change": -331.8000000000029
     },
     {
-      "index": 698,
+      "index": 697,
       "price": 71389.5,
       "next_price": 71855.4,
       "signal": "DOWN",
@@ -388,12 +375,12 @@
       "confidence": 0.838,
       "trend": "STRONG_DOWNTREND",
       "regime": "WEAK_UPTREND",
-      "traded": true,
+      "traded": false,
       "outcome": "LOSS",
       "change": 465.8999999999942
     },
     {
-      "index": 699,
+      "index": 698,
       "price": 71855.4,
       "next_price": 71905.9,
       "signal": "DOWN",
@@ -406,7 +393,7 @@
       "change": 50.5
     },
     {
-      "index": 700,
+      "index": 699,
       "price": 71905.9,
       "next_price": 72100.1,
       "signal": "DOWN",
@@ -419,7 +406,7 @@
       "change": 194.20000000001164
     },
     {
-      "index": 701,
+      "index": 700,
       "price": 72100.1,
       "next_price": 71660.2,
       "signal": "DOWN",
@@ -432,7 +419,7 @@
       "change": -439.90000000000873
     },
     {
-      "index": 702,
+      "index": 701,
       "price": 71660.2,
       "next_price": 71207.0,
       "signal": "DOWN",
@@ -440,12 +427,12 @@
       "confidence": 0.838,
       "trend": "STRONG_DOWNTREND",
       "regime": "TRENDING_DOWN",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": -453.1999999999971
     },
     {
-      "index": 703,
+      "index": 702,
       "price": 71207.0,
       "next_price": 71026.0,
       "signal": "DOWN",
@@ -453,12 +440,12 @@
       "confidence": 0.838,
       "trend": "STRONG_DOWNTREND",
       "regime": "TRENDING_DOWN",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": -181.0
     },
     {
-      "index": 704,
+      "index": 703,
       "price": 71026.0,
       "next_price": 71216.7,
       "signal": "DOWN",
@@ -466,12 +453,12 @@
       "confidence": 0.838,
       "trend": "STRONG_DOWNTREND",
       "regime": "TRENDING_DOWN",
-      "traded": true,
+      "traded": false,
       "outcome": "LOSS",
       "change": 190.6999999999971
     },
     {
-      "index": 705,
+      "index": 704,
       "price": 71216.7,
       "next_price": 71183.1,
       "signal": "DOWN",
@@ -479,12 +466,12 @@
       "confidence": 0.838,
       "trend": "STRONG_DOWNTREND",
       "regime": "TRENDING_DOWN",
-      "traded": true,
+      "traded": false,
       "outcome": "WIN",
       "change": -33.59999999999127
     },
     {
-      "index": 706,
+      "index": 705,
       "price": 71183.1,
       "next_price": 71257.6,
       "signal": "DOWN",
@@ -497,7 +484,7 @@
       "change": 74.5
     },
     {
-      "index": 707,
+      "index": 706,
       "price": 71257.6,
       "next_price": 71067.3,
       "signal": "DOWN",
@@ -510,7 +497,7 @@
       "change": -190.3000000000029
     },
     {
-      "index": 708,
+      "index": 707,
       "price": 71067.3,
       "next_price": 71241.3,
       "signal": "DOWN",
@@ -523,7 +510,7 @@
       "change": 174.0
     },
     {
-      "index": 709,
+      "index": 708,
       "price": 71241.3,
       "next_price": 71079.7,
       "signal": "DOWN",
@@ -536,7 +523,7 @@
       "change": -161.60000000000582
     },
     {
-      "index": 710,
+      "index": 709,
       "price": 71079.7,
       "next_price": 71146.2,
       "signal": "DOWN",
@@ -549,7 +536,7 @@
       "change": 66.5
     },
     {
-      "index": 711,
+      "index": 710,
       "price": 71146.2,
       "next_price": 71183.1,
       "signal": "DOWN",
@@ -562,7 +549,7 @@
       "change": 36.90000000000873
     },
     {
-      "index": 712,
+      "index": 711,
       "price": 71183.1,
       "next_price": 71360.0,
       "signal": "DOWN",
@@ -575,7 +562,7 @@
       "change": 176.89999999999418
     },
     {
-      "index": 713,
+      "index": 712,
       "price": 71360.0,
       "next_price": 71306.1,
       "signal": "DOWN",
@@ -588,7 +575,7 @@
       "change": -53.89999999999418
     },
     {
-      "index": 714,
+      "index": 713,
       "price": 71306.1,
       "next_price": 71310.6,
       "signal": "DOWN",
@@ -601,7 +588,7 @@
       "change": 4.5
     },
     {
-      "index": 715,
+      "index": 714,
       "price": 71310.6,
       "next_price": 71360.0,
       "signal": "DOWN",
@@ -614,7 +601,7 @@
       "change": 49.39999999999418
     },
     {
-      "index": 716,
+      "index": 715,
       "price": 71360.0,
       "next_price": 71414.8,
       "signal": "DOWN",
@@ -627,7 +614,7 @@
       "change": 54.80000000000291
     },
     {
-      "index": 717,
+      "index": 716,
       "price": 71414.8,
       "next_price": 71169.9,
       "signal": "UP",
@@ -640,7 +627,7 @@
       "change": -244.90000000000873
     },
     {
-      "index": 718,
+      "index": 717,
       "price": 71169.9,
       "next_price": 71125.2,
       "signal": "DOWN",
@@ -653,17 +640,30 @@
       "change": -44.69999999999709
     },
     {
-      "index": 719,
+      "index": 718,
       "price": 71125.2,
-      "next_price": 71178.5,
+      "next_price": 71121.3,
       "signal": "DOWN",
       "score": -0.5479,
       "confidence": 0.747,
       "trend": "STRONG_DOWNTREND",
       "regime": "RANGING",
       "traded": false,
-      "outcome": "LOSS",
-      "change": 53.30000000000291
+      "outcome": "WIN",
+      "change": -3.8999999999941792
+    },
+    {
+      "index": 719,
+      "price": 71121.3,
+      "next_price": 70766.6,
+      "signal": "DOWN",
+      "score": -0.3623,
+      "confidence": 0.663,
+      "trend": "STRONG_DOWNTREND",
+      "regime": "RANGING",
+      "traded": false,
+      "outcome": "WIN",
+      "change": -354.6999999999971
     }
   ]
 }

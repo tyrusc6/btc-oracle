@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Bollinger Extremes",
+    "wr": 58.7,
+    "wins": 121,
+    "losses": 85,
+    "trades": 206,
+    "skips": 489
+  },
+  {
+    "name": "BB + Anti-Mom Combined",
+    "wr": 58.6,
+    "wins": 99,
+    "losses": 70,
+    "trades": 169,
+    "skips": 526
+  },
+  {
+    "name": "Mega Combined (2 of 3)",
+    "wr": 57.7,
+    "wins": 86,
+    "losses": 63,
+    "trades": 149,
+    "skips": 546
+  },
+  {
+    "name": "RSI Extreme",
+    "wr": 57.1,
+    "wins": 8,
+    "losses": 6,
+    "trades": 14,
+    "skips": 681
+  },
+  {
+    "name": "Anti-Momentum",
+    "wr": 52.7,
+    "wins": 246,
+    "losses": 221,
+    "trades": 467,
+    "skips": 228
+  }
+]
