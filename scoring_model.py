@@ -1,199 +1,247 @@
 """
-BTC Oracle - Scoring Model V3
-MEAN REVERSION strategy (proven 58-61% in backtesting)
-+ Live order flow / order book for edge
-+ Anti-momentum for confirmation
+BTC Oracle - Scoring Model V5
+Mean reversion + order flow.
+ONLY learns from V5 signals (analysis_notes starts with [TRADE] or [WAIT]).
+Tracks which tier drives wins vs losses and auto-adjusts weights.
 """
 
 import db
 import numpy as np
+from datetime import datetime, timezone
+
+# V5 epoch - only learn from signals after this point
+V5_EPOCH = "2026-03-13T00:00:00Z"
+
+# Tier weights - these get adjusted by learning
+DEFAULT_TIER_WEIGHTS = {
+    "bb_extreme": 3.0,
+    "bb_moderate": 2.0,
+    "bb_mild": 1.0,
+    "anti_momentum": 1.5,
+    "anti_roc": 1.0,
+    "rsi_extreme": 2.0,
+    "rsi_moderate": 0.8,
+    "stoch_extreme": 1.5,
+    "orderbook_imbalance": 2.5,
+    "orderbook_strong": 1.5,
+    "trade_flow": 2.0,
+    "trade_flow_strong": 1.0,
+    "whale": 2.5,
+    "bid_wall": 1.5,
+    "ask_wall": 1.5,
+    "vwap_revert": 0.8,
+    "obv_divergence": 1.5,
+}
 
 
-def calculate_indicator_weights():
-    """Learn from recent signals which conditions predict actual price direction."""
-    signals = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=100")
-    if not signals or len(signals) < 15:
-        return {}
+def get_v5_signals():
+    """Only get signals from V5 epoch onwards."""
+    params = f"outcome=not.is.null&created_at=gte.{V5_EPOCH}&order=created_at.desc&limit=200"
+    return db.select("signals", params)
 
-    weights = {}
-    valid = []
+
+def learn_tier_weights():
+    """
+    Analyze V5 signals to see which tiers predict correctly.
+    Returns adjusted weights dict.
+    """
+    signals = get_v5_signals()
+    if not signals or len(signals) < 10:
+        print(f"  Learning: only {len(signals) if signals else 0} V5 signals, using defaults")
+        return DEFAULT_TIER_WEIGHTS.copy()
+
+    # For each signal, determine what conditions were present and if price went up
+    tier_stats = {}  # tier_name -> {"correct": N, "total": N}
+
     for s in signals:
-        if s.get("btc_price_at_signal") and s.get("btc_price_at_close"):
-            s["actual_up"] = s["btc_price_at_close"] > s["btc_price_at_signal"]
-            valid.append(s)
+        if not s.get("btc_price_at_signal") or not s.get("btc_price_at_close"):
+            continue
 
-    if len(valid) < 15:
-        return {}
+        actual_up = s["btc_price_at_close"] > s["btc_price_at_signal"]
+        price = s["btc_price_at_signal"]
 
-    weights["base_up_rate"] = sum(1 for s in valid if s["actual_up"]) / len(valid)
+        # Check Bollinger position
+        if s.get("bollinger_upper") is not None and s.get("bollinger_lower") is not None:
+            bu, bl = s["bollinger_upper"], s["bollinger_lower"]
+            if bu != bl:
+                bb_pos = (price - bl) / (bu - bl)
+                if bb_pos > 0.8:
+                    # BB said go DOWN (mean revert)
+                    _track(tier_stats, "bb_extreme" if bb_pos > 0.9 else "bb_moderate", not actual_up)
+                elif bb_pos < 0.2:
+                    # BB said go UP (mean revert)
+                    _track(tier_stats, "bb_extreme" if bb_pos < 0.1 else "bb_moderate", actual_up)
 
-    # Learn Bollinger band edge
-    bb_high = [s for s in valid if s.get("bollinger_upper") is not None and s.get("btc_price_at_signal") is not None
-               and s.get("bollinger_lower") is not None and s["bollinger_upper"] != s["bollinger_lower"]]
-    if len(bb_high) >= 5:
-        near_upper = [s for s in bb_high if (s["btc_price_at_signal"] - s["bollinger_lower"]) / (s["bollinger_upper"] - s["bollinger_lower"]) > 0.8]
-        near_lower = [s for s in bb_high if (s["btc_price_at_signal"] - s["bollinger_lower"]) / (s["bollinger_upper"] - s["bollinger_lower"]) < 0.2]
-        if len(near_upper) >= 3:
-            weights["bb_upper_reversal"] = sum(1 for s in near_upper if not s["actual_up"]) / len(near_upper)
-        if len(near_lower) >= 3:
-            weights["bb_lower_reversal"] = sum(1 for s in near_lower if s["actual_up"]) / len(near_lower)
+        # Check momentum (anti-momentum: positive momentum = predict DOWN)
+        if s.get("momentum") is not None:
+            if s["momentum"] > 0:
+                _track(tier_stats, "anti_momentum", not actual_up)
+            elif s["momentum"] < 0:
+                _track(tier_stats, "anti_momentum", actual_up)
 
-    print(f"  Learned weights ({len(valid)} signals):")
-    for k, v in weights.items():
-        print(f"    {k}: {v:.1%}")
+        # Check RSI
+        if s.get("rsi") is not None:
+            if s["rsi"] > 75:
+                _track(tier_stats, "rsi_extreme", not actual_up)
+            elif s["rsi"] < 25:
+                _track(tier_stats, "rsi_extreme", actual_up)
 
-    return weights
+    # Adjust weights based on accuracy
+    adjusted = DEFAULT_TIER_WEIGHTS.copy()
+    print(f"  Learning from {len(signals)} V5 signals:")
+
+    for tier, stats in tier_stats.items():
+        if stats["total"] >= 3:
+            accuracy = stats["correct"] / stats["total"]
+            # Scale weight: if accuracy > 50%, increase weight. If < 50%, decrease.
+            multiplier = 0.5 + accuracy  # ranges from 0.5 (0% accuracy) to 1.5 (100% accuracy)
+            if tier in adjusted:
+                old = adjusted[tier]
+                adjusted[tier] = round(old * multiplier, 2)
+                print(f"    {tier}: {accuracy:.0%} accurate ({stats['correct']}/{stats['total']}) -> weight {old} -> {adjusted[tier]}")
+
+    return adjusted
+
+
+def _track(stats, tier, was_correct):
+    """Track whether a tier's prediction was correct."""
+    if tier not in stats:
+        stats[tier] = {"correct": 0, "total": 0}
+    stats[tier]["total"] += 1
+    if was_correct:
+        stats[tier]["correct"] += 1
 
 
 def score_signal(indicators, market_data=None):
     """
-    Mean Reversion + Order Flow scoring.
-    Core idea: BTC at 15-min tends to REVERSE, not continue.
-    Order flow confirms or denies the reversal.
+    Mean Reversion + Order Flow scoring with learned weights.
     """
+    weights = learn_tier_weights()
     votes = []
     current = indicators.get("current_price", 0)
 
     # ============================================
-    # TIER 1: BOLLINGER EXTREMES (highest weight - proven 58-61%)
+    # TIER 1: BOLLINGER EXTREMES
     # ============================================
     bb_pos = indicators.get("bollinger_position")
     if bb_pos is not None:
         if bb_pos > 0.9:
-            # Very near upper band - strong mean reversion DOWN
-            votes.append((-1, 3.0))
+            votes.append((-1, weights["bb_extreme"]))
         elif bb_pos > 0.8:
-            votes.append((-1, 2.0))
+            votes.append((-1, weights["bb_moderate"]))
         elif bb_pos > 0.7:
-            votes.append((-1, 1.0))
+            votes.append((-1, weights["bb_mild"]))
         elif bb_pos < 0.1:
-            # Very near lower band - strong mean reversion UP
-            votes.append((+1, 3.0))
+            votes.append((+1, weights["bb_extreme"]))
         elif bb_pos < 0.2:
-            votes.append((+1, 2.0))
+            votes.append((+1, weights["bb_moderate"]))
         elif bb_pos < 0.3:
-            votes.append((+1, 1.0))
-        # Middle zone (0.3-0.7) = no signal from BB
+            votes.append((+1, weights["bb_mild"]))
 
     # ============================================
-    # TIER 2: ANTI-MOMENTUM (proven 52-54%)
+    # TIER 2: ANTI-MOMENTUM
     # ============================================
     momentum = indicators.get("momentum")
-    roc = indicators.get("rate_of_change")
-
     if momentum is not None:
-        # Fade momentum - if price has been going up, bet DOWN
         if momentum > 0:
-            votes.append((-1, 1.5))  # anti-momentum
+            votes.append((-1, weights["anti_momentum"]))
         elif momentum < 0:
-            votes.append((+1, 1.5))
+            votes.append((+1, weights["anti_momentum"]))
 
+    roc = indicators.get("rate_of_change")
     if roc is not None:
         if roc > 0.15:
-            votes.append((-1, 1.0))  # extended up, expect pullback
+            votes.append((-1, weights["anti_roc"]))
         elif roc < -0.15:
-            votes.append((+1, 1.0))  # extended down, expect bounce
+            votes.append((+1, weights["anti_roc"]))
 
     # ============================================
-    # TIER 3: RSI EXTREMES (mean reversion)
+    # TIER 3: RSI EXTREMES
     # ============================================
     rsi = indicators.get("rsi")
     if rsi is not None:
         if rsi > 75:
-            votes.append((-1, 2.0))  # overbought, expect down
+            votes.append((-1, weights["rsi_extreme"]))
         elif rsi > 65:
-            votes.append((-1, 0.8))
+            votes.append((-1, weights["rsi_moderate"]))
         elif rsi < 25:
-            votes.append((+1, 2.0))  # oversold, expect up
+            votes.append((+1, weights["rsi_extreme"]))
         elif rsi < 35:
-            votes.append((+1, 0.8))
+            votes.append((+1, weights["rsi_moderate"]))
 
     stoch_k = indicators.get("stoch_rsi_k")
     if stoch_k is not None:
         if stoch_k > 80:
-            votes.append((-1, 1.5))
+            votes.append((-1, weights["stoch_extreme"]))
         elif stoch_k < 20:
-            votes.append((+1, 1.5))
+            votes.append((+1, weights["stoch_extreme"]))
 
     # ============================================
-    # TIER 4: ORDER FLOW (live only - the edge backtest can't capture)
+    # TIER 4: ORDER FLOW (live edge)
     # ============================================
     if market_data:
-        # Order book imbalance - THIS is the live edge
-        ob_imbalance = market_data.get("orderbook_imbalance")
         ob_signal = market_data.get("orderbook_imbalance_signal")
+        ob_imbalance = market_data.get("orderbook_imbalance")
 
         if ob_signal == "BUY_PRESSURE":
-            votes.append((+1, 2.5))  # heavy buy pressure = UP
+            votes.append((+1, weights["orderbook_imbalance"]))
         elif ob_signal == "SELL_PRESSURE":
-            votes.append((-1, 2.5))  # heavy sell pressure = DOWN
+            votes.append((-1, weights["orderbook_imbalance"]))
 
-        # If imbalance is very strong, increase weight
         if ob_imbalance is not None:
             if ob_imbalance > 0.3:
-                votes.append((+1, 1.5))  # very strong buy side
+                votes.append((+1, weights["orderbook_strong"]))
             elif ob_imbalance < -0.3:
-                votes.append((-1, 1.5))  # very strong sell side
+                votes.append((-1, weights["orderbook_strong"]))
 
-        # Trade flow - are people buying or selling right now?
         tf_signal = market_data.get("trade_flow_signal")
         tf_buy_pct = market_data.get("trade_flow_buy_pct")
 
         if tf_signal == "BUYING":
-            votes.append((+1, 2.0))
+            votes.append((+1, weights["trade_flow"]))
         elif tf_signal == "SELLING":
-            votes.append((-1, 2.0))
+            votes.append((-1, weights["trade_flow"]))
 
-        # Strong buy/sell flow
         if tf_buy_pct is not None:
             if tf_buy_pct > 60:
-                votes.append((+1, 1.0))
+                votes.append((+1, weights["trade_flow_strong"]))
             elif tf_buy_pct < 40:
-                votes.append((-1, 1.0))
+                votes.append((-1, weights["trade_flow_strong"]))
 
-        # Whale activity
         whale = market_data.get("trade_flow_whale_signal")
         if whale == "WHALE_BUYING":
-            votes.append((+1, 2.5))  # whales are the strongest signal
+            votes.append((+1, weights["whale"]))
         elif whale == "WHALE_SELLING":
-            votes.append((-1, 2.5))
+            votes.append((-1, weights["whale"]))
 
-        # Spread - wide spread means uncertainty
-        spread_pct = market_data.get("orderbook_spread_pct")
-        if spread_pct is not None and spread_pct > 0.01:
-            # Wide spread = reduce confidence later
-            pass
-
-        # Bid/ask wall detection
         if market_data.get("orderbook_bid_wall_detected"):
-            votes.append((+1, 1.5))  # big buy wall = support
+            votes.append((+1, weights["bid_wall"]))
         if market_data.get("orderbook_ask_wall_detected"):
-            votes.append((-1, 1.5))  # big sell wall = resistance
+            votes.append((-1, weights["ask_wall"]))
 
     # ============================================
-    # TIER 5: VWAP (mean reversion)
+    # TIER 5: VWAP MEAN REVERSION
     # ============================================
     vwap = indicators.get("vwap")
     if vwap is not None and current:
         vwap_dist = (current - vwap) / vwap * 100
         if vwap_dist > 0.3:
-            votes.append((-1, 0.8))  # above VWAP, mean revert down
+            votes.append((-1, weights["vwap_revert"]))
         elif vwap_dist < -0.3:
-            votes.append((+1, 0.8))  # below VWAP, mean revert up
+            votes.append((+1, weights["vwap_revert"]))
 
     # ============================================
-    # TIER 6: OBV (volume confirms or denies)
+    # TIER 6: OBV DIVERGENCE
     # ============================================
     obv = indicators.get("obv_trend")
-    # OBV divergence from price = powerful reversal signal
     trend_1m = indicators.get("trend_1m", "")
     if obv == "FALLING" and "UPTREND" in trend_1m:
-        votes.append((-1, 1.5))  # price up but volume down = bearish divergence
+        votes.append((-1, weights["obv_divergence"]))
     elif obv == "RISING" and "DOWNTREND" in trend_1m:
-        votes.append((+1, 1.5))  # price down but volume up = bullish divergence
+        votes.append((+1, weights["obv_divergence"]))
 
     # ============================================
-    # CALCULATE FINAL SCORE
+    # CALCULATE
     # ============================================
     if not votes:
         return 0.0, 0.5, "NO_DATA"
@@ -203,20 +251,18 @@ def score_signal(indicators, market_data=None):
     score = weighted_sum / total_weight if total_weight > 0 else 0
 
     signal = "UP" if score > 0 else "DOWN"
-    agreement = abs(score)
-    confidence = min(0.95, 0.5 + agreement * 0.45)
+    confidence = min(0.95, 0.5 + abs(score) * 0.45)
 
-    # Reduce confidence in high volatility
     if market_data and market_data.get("volatility_regime") == "HIGH":
         confidence *= 0.85
 
-    # Boost confidence when order flow strongly confirms
+    # Boost when order flow confirms mean reversion
     if market_data:
-        ob_signal = market_data.get("orderbook_imbalance_signal")
-        tf_signal = market_data.get("trade_flow_signal")
-        if signal == "UP" and ob_signal == "BUY_PRESSURE" and tf_signal == "BUYING":
+        ob_s = market_data.get("orderbook_imbalance_signal")
+        tf_s = market_data.get("trade_flow_signal")
+        if signal == "UP" and ob_s == "BUY_PRESSURE" and tf_s == "BUYING":
             confidence = min(0.95, confidence + 0.08)
-        elif signal == "DOWN" and ob_signal == "SELL_PRESSURE" and tf_signal == "SELLING":
+        elif signal == "DOWN" and ob_s == "SELL_PRESSURE" and tf_s == "SELLING":
             confidence = min(0.95, confidence + 0.08)
 
     return score, round(confidence, 3), signal

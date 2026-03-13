@@ -1,8 +1,8 @@
 """
-BTC Oracle - Self Training Engine (V2)
-- Reviews EACH trade exactly once (tracks reviewed IDs)
-- Every 20 trades: deep strategy review
-- Feeds structured rules back, not just text
+BTC Oracle - Self Trainer V3
+Only learns from V5 signals.
+Tracks which tiers caused wins vs losses.
+Writes actionable strategy updates every 20 V5 trades.
 """
 
 import os
@@ -11,60 +11,76 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 import anthropic
 import db
-from pattern_analyzer import get_pattern_summary
 
 load_dotenv()
 
 claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# Track which signals we've already reviewed (in memory, resets on deploy)
-reviewed_signal_ids = set()
+V5_EPOCH = "2026-03-13T00:00:00Z"
+reviewed_ids = set()
 
 
-def get_unreviewed_signals():
-    """Get resolved signals that haven't been reviewed yet."""
-    signals = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=10")
-    if not signals:
-        return []
-    return [s for s in signals if s["id"] not in reviewed_signal_ids]
+def get_v5_signals(limit=200):
+    params = f"outcome=not.is.null&created_at=gte.{V5_EPOCH}&order=created_at.desc&limit={limit}"
+    return db.select("signals", params)
 
 
-def get_strategy_document():
-    data = db.select("journal", "entry_type=eq.STRATEGY&order=created_at.desc&limit=1")
-    return (data[0].get("content") or "No strategy document yet.") if data else "No strategy document yet. Build one from scratch."
+def get_unreviewed():
+    signals = get_v5_signals(10)
+    return [s for s in signals if s["id"] not in reviewed_ids] if signals else []
 
 
 def analyze_single_trade(signal):
-    """Quick analysis after each trade resolves. Only called once per trade."""
+    """Quick review after each V5 trade."""
     if not signal or not signal.get("outcome"):
         return
 
-    price_change = signal.get('btc_price_at_close', 0) - signal.get('btc_price_at_signal', 0)
+    price = signal.get("btc_price_at_signal", 0)
+    close = signal.get("btc_price_at_close", 0)
+    change = close - price if price and close else 0
 
-    prompt = f"""Analyze this completed BTC trade in 1-2 sentences:
+    # Determine what the mean reversion strategy would have predicted
+    notes = signal.get("analysis_notes", "") or ""
+    was_trade = notes.startswith("[TRADE]")
 
-Signal: {signal['signal']} | Outcome: {signal['outcome']}
-Price: ${signal.get('btc_price_at_signal', 0):,.2f} -> ${signal.get('btc_price_at_close', 0):,.2f} (${price_change:+,.2f})
-Confidence: {signal.get('confidence', 'N/A')}
-RSI: {signal.get('rsi', 'N/A')} | MACD: {signal.get('macd', 'N/A')} | Momentum: {signal.get('momentum', 'N/A')}
-Bot's reasoning: {(signal.get('analysis_notes', '') or '')[:200]}
+    # Analyze which tiers were active
+    tier_analysis = []
+    bb_upper = signal.get("bollinger_upper")
+    bb_lower = signal.get("bollinger_lower")
+    if bb_upper and bb_lower and bb_upper != bb_lower and price:
+        bb_pos = (price - bb_lower) / (bb_upper - bb_lower)
+        if bb_pos > 0.8 or bb_pos < 0.2:
+            tier_analysis.append(f"BB extreme (pos={bb_pos:.2f})")
 
-What specifically caused this {'win' if signal['outcome'] == 'WIN' else 'loss'}? One actionable takeaway.
+    rsi = signal.get("rsi")
+    if rsi is not None and (rsi > 70 or rsi < 30):
+        tier_analysis.append(f"RSI extreme ({rsi:.1f})")
 
-JSON: {{"entry_type": "TRADE_REVIEW", "content": "your 1-2 sentence analysis"}}"""
+    mom = signal.get("momentum")
+    if mom is not None:
+        tier_analysis.append(f"Momentum {'positive' if mom > 0 else 'negative'} ({mom:.2f})")
+
+    tier_text = ", ".join(tier_analysis) if tier_analysis else "No extreme tiers active"
+
+    prompt = f"""Analyze this BTC trade (mean reversion strategy):
+
+Signal: {signal['signal']} | Outcome: {signal['outcome']} | {'TRADED' if was_trade else 'WAITED'}
+Price: ${price:,.2f} -> ${close:,.2f} (${change:+,.2f})
+RSI: {rsi} | Momentum: {mom}
+Active tiers: {tier_text}
+
+In 1 sentence: Why did this {'win' if signal['outcome'] == 'WIN' else 'lose'}? Which tier helped or hurt?
+
+JSON: {{"entry_type": "TRADE_REVIEW", "content": "your analysis"}}"""
 
     try:
-        resp = claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        resp = claude.messages.create(model="claude-sonnet-4-20250514", max_tokens=150, messages=[{"role": "user", "content": prompt}])
         text = resp.content[0].text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         try:
             entry = json.loads(text)
-        except json.JSONDecodeError:
+        except:
             entry = {"entry_type": "TRADE_REVIEW", "content": text[:500]}
 
         db.insert("journal", {
@@ -73,153 +89,134 @@ JSON: {{"entry_type": "TRADE_REVIEW", "content": "your 1-2 sentence analysis"}}"
             "win_rate_at_time": 0,
             "total_signals_at_time": signal.get("id", 0)
         })
-        
-        # Mark as reviewed
-        reviewed_signal_ids.add(signal["id"])
-        print(f"  Trade #{signal['id']} Review: {entry.get('content', '')[:80]}...")
-        return entry
+        reviewed_ids.add(signal["id"])
+        print(f"  Trade #{signal['id']}: {entry.get('content', '')[:80]}...")
     except Exception as e:
-        print(f"  Error reviewing trade #{signal.get('id', '?')}: {e}")
-        reviewed_signal_ids.add(signal.get("id", 0))
-        return None
+        print(f"  Review error: {e}")
+        reviewed_ids.add(signal.get("id", 0))
 
 
 def deep_strategy_review():
-    """Every 20 trades: comprehensive strategy update."""
-    all_signals = db.select("signals", "outcome=not.is.null&order=created_at.desc&limit=200")
-    if not all_signals:
+    """Every 20 V5 trades: analyze tier performance and write strategy update."""
+    signals = get_v5_signals(200)
+    if not signals:
         return
 
-    total = len(all_signals)
+    total = len(signals)
     if total < 20 or total % 20 != 0:
         return
 
-    print(f"\n  === DEEP STRATEGY REVIEW === Signal #{total}")
+    print(f"\n  === V5 DEEP REVIEW === ({total} V5 signals)")
 
-    wins = [s for s in all_signals if s["outcome"] == "WIN"]
-    losses = [s for s in all_signals if s["outcome"] == "LOSS"]
-    win_rate = len(wins) / total * 100
+    wins = [s for s in signals if s["outcome"] == "WIN"]
+    losses = [s for s in signals if s["outcome"] == "LOSS"]
+    wr = len(wins) / total * 100
 
-    # Only analyze recent 50 signals for patterns (avoid old broken data)
-    recent = all_signals[:50]
-    recent_wins = [s for s in recent if s["outcome"] == "WIN"]
-    recent_wr = len(recent_wins) / len(recent) * 100 if recent else 0
+    # Analyze tier performance
+    tier_results = {
+        "bb_extreme_up": {"correct": 0, "total": 0},
+        "bb_extreme_down": {"correct": 0, "total": 0},
+        "anti_momentum": {"correct": 0, "total": 0},
+        "rsi_extreme": {"correct": 0, "total": 0},
+    }
 
-    # Find what conditions correlate with actual price going up
-    up_moves = [s for s in recent if s.get("btc_price_at_close") and s.get("btc_price_at_signal") and s["btc_price_at_close"] > s["btc_price_at_signal"]]
-    down_moves = [s for s in recent if s.get("btc_price_at_close") and s.get("btc_price_at_signal") and s["btc_price_at_close"] <= s["btc_price_at_signal"]]
+    for s in signals:
+        if not s.get("btc_price_at_signal") or not s.get("btc_price_at_close"):
+            continue
+        actual_up = s["btc_price_at_close"] > s["btc_price_at_signal"]
+        price = s["btc_price_at_signal"]
 
-    up_conditions = ""
-    if up_moves:
-        avg_rsi_up = sum(s.get("rsi", 50) or 50 for s in up_moves) / len(up_moves)
-        avg_macd_up = sum(s.get("macd", 0) or 0 for s in up_moves) / len(up_moves)
-        avg_mom_up = sum(s.get("momentum", 0) or 0 for s in up_moves) / len(up_moves)
-        up_conditions = f"When price went UP ({len(up_moves)} times): avg RSI={avg_rsi_up:.1f}, avg MACD={avg_macd_up:.2f}, avg Momentum={avg_mom_up:.2f}"
+        # BB tier
+        bu, bl = s.get("bollinger_upper"), s.get("bollinger_lower")
+        if bu and bl and bu != bl:
+            bb_pos = (price - bl) / (bu - bl)
+            if bb_pos > 0.8:
+                tier_results["bb_extreme_down"]["total"] += 1
+                if not actual_up:
+                    tier_results["bb_extreme_down"]["correct"] += 1
+            elif bb_pos < 0.2:
+                tier_results["bb_extreme_up"]["total"] += 1
+                if actual_up:
+                    tier_results["bb_extreme_up"]["correct"] += 1
 
-    down_conditions = ""
-    if down_moves:
-        avg_rsi_dn = sum(s.get("rsi", 50) or 50 for s in down_moves) / len(down_moves)
-        avg_macd_dn = sum(s.get("macd", 0) or 0 for s in down_moves) / len(down_moves)
-        avg_mom_dn = sum(s.get("momentum", 0) or 0 for s in down_moves) / len(down_moves)
-        down_conditions = f"When price went DOWN ({len(down_moves)} times): avg RSI={avg_rsi_dn:.1f}, avg MACD={avg_macd_dn:.2f}, avg Momentum={avg_mom_dn:.2f}"
+        # Anti-momentum tier
+        mom = s.get("momentum")
+        if mom is not None and mom != 0:
+            tier_results["anti_momentum"]["total"] += 1
+            if (mom > 0 and not actual_up) or (mom < 0 and actual_up):
+                tier_results["anti_momentum"]["correct"] += 1
 
-    # Get recent trade reviews
-    reviews = db.select("journal", "entry_type=eq.TRADE_REVIEW&order=created_at.desc&limit=20")
-    review_text = "\n".join(f"  - {r['content']}" for r in reviews) if reviews else "None"
+        # RSI tier
+        rsi = s.get("rsi")
+        if rsi is not None and (rsi > 70 or rsi < 30):
+            tier_results["rsi_extreme"]["total"] += 1
+            if (rsi > 70 and not actual_up) or (rsi < 30 and actual_up):
+                tier_results["rsi_extreme"]["correct"] += 1
 
-    # Time analysis
-    hour_stats = {}
-    for s in recent:
-        try:
-            hour = datetime.fromisoformat(s["created_at"].replace("Z", "+00:00")).hour
-            if hour not in hour_stats:
-                hour_stats[hour] = {"total": 0, "up": 0}
-            hour_stats[hour]["total"] += 1
-            if s.get("btc_price_at_close") and s.get("btc_price_at_signal") and s["btc_price_at_close"] > s["btc_price_at_signal"]:
-                hour_stats[hour]["up"] += 1
-        except:
-            pass
+    tier_text = ""
+    for tier, stats in tier_results.items():
+        if stats["total"] >= 3:
+            acc = stats["correct"] / stats["total"] * 100
+            tier_text += f"  {tier}: {acc:.0f}% ({stats['correct']}/{stats['total']})\n"
 
-    time_text = ""
-    for h in sorted(hour_stats.keys()):
-        if hour_stats[h]["total"] >= 3:
-            up_pct = hour_stats[h]["up"] / hour_stats[h]["total"] * 100
-            time_text += f"  {h}:00 UTC: {up_pct:.0f}% up ({hour_stats[h]['total']} signals)\n"
+    # Traded vs waited
+    traded = [s for s in signals if (s.get("analysis_notes") or "").startswith("[TRADE]")]
+    waited = [s for s in signals if (s.get("analysis_notes") or "").startswith("[WAIT]")]
+    trade_wins = len([s for s in traded if s["outcome"] == "WIN"])
+    trade_total = len(traded)
+    trade_wr = trade_wins / trade_total * 100 if trade_total > 0 else 0
 
-    prompt = f"""You are BTC Oracle's strategic brain. Write a NEW strategy document after {total} total trades.
+    prompt = f"""V5 Strategy Review after {total} signals.
 
-RECENT PERFORMANCE (last 50): {recent_wr:.1f}% win rate
-OVERALL: {win_rate:.1f}% ({len(wins)}W/{len(losses)}L)
+Overall WR: {wr:.1f}% ({len(wins)}W/{len(losses)}L)
+TRADE WR: {trade_wr:.1f}% ({trade_wins}/{trade_total})
+Waited: {len(waited)} signals
 
-WHAT ACTUALLY PREDICTS PRICE MOVEMENT:
-{up_conditions}
-{down_conditions}
+TIER PERFORMANCE:
+{tier_text}
 
-TIME OF DAY PATTERNS:
-{time_text}
+Write 3-4 bullet points: which tiers work, which don't, what to adjust.
+Keep under 300 chars.
 
-RECENT TRADE REVIEWS:
-{review_text}
-
-Write a CONCISE strategy (5-7 bullet points max). Focus ONLY on:
-1. Which indicators actually predict price direction (based on the data above)
-2. When to signal UP vs DOWN
-3. What conditions to avoid
-
-DO NOT reference old rules. Only use the data provided above.
-Keep it under 500 characters total.
-
-JSON: {{"entry_type": "STRATEGY", "content": "your strategy"}}"""
+JSON: {{"entry_type": "STRATEGY", "content": "your bullets"}}"""
 
     try:
-        resp = claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        resp = claude.messages.create(model="claude-sonnet-4-20250514", max_tokens=400, messages=[{"role": "user", "content": prompt}])
         text = resp.content[0].text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
         try:
             entry = json.loads(text)
-        except json.JSONDecodeError:
-            content = text
-            if '"content"' in text:
-                start = text.find('"content"')
-                start = text.find(':', start) + 1
-                content = text[start:].strip().strip('"').rstrip('"}')
-            entry = {"entry_type": "STRATEGY", "content": content[:2000]}
+        except:
+            entry = {"entry_type": "STRATEGY", "content": text[:1000]}
 
         db.insert("journal", {
             "entry_type": "STRATEGY",
             "content": entry.get("content", "")[:2000],
-            "win_rate_at_time": win_rate / 100,
+            "win_rate_at_time": wr / 100,
             "total_signals_at_time": total
         })
-        print(f"  STRATEGY UPDATED: {entry.get('content', '')[:150]}...")
-        return entry
+        print(f"  Strategy updated: {entry.get('content', '')[:150]}...")
     except Exception as e:
-        print(f"  Error in deep review: {e}")
-        return None
+        print(f"  Strategy review error: {e}")
 
 
 def run_self_training():
-    """Run after each signal cycle."""
-    print("  Running self-training...")
+    """Run after each cycle."""
+    print("  Running V5 self-training...")
 
-    # Review any unreviewed trades (usually 1)
-    unreviewed = get_unreviewed_signals()
+    # Review unreviewed V5 trades
+    unreviewed = get_unreviewed()
     if unreviewed:
-        for signal in unreviewed[:3]:  # max 3 per cycle
-            analyze_single_trade(signal)
+        for s in unreviewed[:3]:
+            analyze_single_trade(s)
     else:
-        print("  No new trades to review.")
+        print("  No new V5 trades to review.")
 
-    # Deep strategy review every 20 trades
-    all_resolved = db.select("signals", "outcome=not.is.null&select=id")
-    if all_resolved:
-        total = len(all_resolved)
+    # Deep review every 20 V5 trades
+    v5_count = get_v5_signals(500)
+    if v5_count:
+        total = len(v5_count)
         if total >= 20 and total % 20 == 0:
             deep_strategy_review()
 
