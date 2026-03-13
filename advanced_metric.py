@@ -92,7 +92,7 @@ def calculate_advanced_metrics():
 
 
 def find_winning_combinations():
-    signals = get_all_resolved_signals(500)
+    signals = get_all_resolved_signals(100)  # limit to 100 for performance
     if not signals or len(signals) < 20:
         return {"status": "Need more data"}
 

@@ -31,7 +31,7 @@ def get_unreviewed_signals():
 
 def get_strategy_document():
     data = db.select("journal", "entry_type=eq.STRATEGY&order=created_at.desc&limit=1")
-    return data[0]["content"] if data else "No strategy document yet. Build one from scratch."
+    return (data[0].get("content") or "No strategy document yet.") if data else "No strategy document yet. Build one from scratch."
 
 
 def analyze_single_trade(signal):
