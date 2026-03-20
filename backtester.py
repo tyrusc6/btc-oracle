@@ -4,7 +4,7 @@ Pulls max data from Kraken using 1-min candles (720 per request),
 resamples to 15-min, tests Bollinger Extremes + Anti-Momentum strategies.
 """
 
-import json, time, requests
+import json, os, time, requests
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
@@ -232,21 +232,47 @@ def test_strategy(df, name, strategy_func):
     return {"name": name, "wr": round(wr, 1), "wins": wins, "losses": losses, "trades": traded, "skips": skips}
 
 
+def load_historical_15m(path):
+    """Load historical trades and resample to 15-min candles."""
+    print(f"Loading historical data from {path}...")
+    trades = pd.read_parquet(path)
+    print(f"  Loaded {len(trades):,} trades")
+
+    trades["datetime"] = pd.to_datetime(trades["timestamp"], unit="ms", utc=True)
+    trades = trades.set_index("datetime").sort_index()
+
+    candles = trades["price"].resample("15min").ohlc()
+    candles["vol"] = trades["qty"].resample("15min").sum()
+    candles = candles.dropna(subset=["open"])
+    candles = candles.reset_index()
+    candles = candles.rename(columns={"open": "o", "high": "h", "low": "l", "close": "c", "datetime": "ts"})
+    print(f"  Built {len(candles)} 15-min candles")
+    print(f"  From {candles['ts'].iloc[0]} to {candles['ts'].iloc[-1]}")
+    return candles
+
+
 def run():
     print("=" * 60)
     print("BACKTESTER V4 - MEAN REVERSION STRATEGIES")
     print("=" * 60)
-    
-    # Get data from both sources
-    df_1m = fetch_1min_candles()
-    df_15m = fetch_15min_direct()
-    
-    # Use the 1-min resampled data (more data points)
-    df = df_1m if not df_1m.empty and len(df_1m) > len(df_15m) else df_15m
-    
+
+    # Try historical data first (much more samples)
+    hist_path = ".tmp/xbtusd_trades_2024-09-01_2025-03-01.parquet"
+    hist_path_2m = ".tmp/xbtusd_trades_2025-01-01_2025-03-01.parquet"
+
+    if os.path.exists(hist_path):
+        df = load_historical_15m(hist_path)
+    elif os.path.exists(hist_path_2m):
+        df = load_historical_15m(hist_path_2m)
+    else:
+        print("No historical data found, fetching live from Kraken...")
+        df_1m = fetch_1min_candles()
+        df_15m = fetch_15min_direct()
+        df = df_1m if not df_1m.empty and len(df_1m) > len(df_15m) else df_15m
+
     if df.empty:
         print("No data!"); return
-    
+
     print(f"\nTesting strategies on {len(df)} candles")
     print("=" * 60)
     

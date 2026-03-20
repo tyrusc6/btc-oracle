@@ -1,0 +1,9 @@
+.env
+.DS_Store
+__pycache__/
+*.pyc
+.tmp/
+model_old.pkl
+save_stacked_model.py
+confidence_sweep.py
+experiment_runner.py

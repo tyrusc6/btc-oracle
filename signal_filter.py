@@ -100,31 +100,6 @@ def should_trade(score, score_confidence, claude_signal, claude_confidence,
     detail = " | ".join(reasons_to_trade + reasons_to_wait)
     
     return should, f"{reason}: {detail}", round(adjusted, 3)
-    
-    # Rule 6: Strong score magnitude
-    if abs(score) > 0.5:
-        reasons_to_trade.append(f"Strong score magnitude: {score:+.3f}")
-    elif abs(score) < 0.2:
-        reasons_to_wait.append(f"Weak score: {score:+.3f}")
-    
-    # Decision
-    trade_score = len(reasons_to_trade)
-    wait_score = len(reasons_to_wait)
-    
-    # Need at least 3 reasons to trade and more reasons to trade than wait
-    should = trade_score >= 3 and trade_score > wait_score
-    
-    # Adjust confidence based on filter
-    if should:
-        # Boost confidence when everything aligns
-        adjusted = min(0.95, (score_confidence + claude_confidence) / 2 + 0.05 * trade_score)
-    else:
-        adjusted = min(0.5, (score_confidence + claude_confidence) / 2 - 0.05 * wait_score)
-    
-    reason = f"TRADE ({trade_score} for, {wait_score} against)" if should else f"WAIT ({wait_score} against, {trade_score} for)"
-    detail = " | ".join(reasons_to_trade + reasons_to_wait)
-    
-    return should, f"{reason}: {detail}", round(adjusted, 3)
 
 
 def track_shadow_mode(score_signal, claude_signal, actual_outcome):

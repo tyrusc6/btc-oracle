@@ -21,6 +21,7 @@ from advanced_metrics import get_metrics_summary
 from kalshi_odds import get_kalshi_btc_contracts, analyze_edge
 from regime_detector import detect_regime
 from signal_filter import should_trade, get_feature_importance_summary
+import lgbm_signal
 
 load_dotenv()
 
@@ -79,11 +80,16 @@ def ask_claude_for_signal(indicators, market_data, news_data, correlated_data,
         kalshi_text = f"Market expects: {kalshi_data.get('kalshi_market_expects', '?')} ({kalshi_data.get('kalshi_market_confidence', 0)}%)"
     edge_text = f"Edge: {edge_analysis.get('edge_type', '?')} ({edge_analysis.get('edge_strength', '?')})" if edge_analysis else ""
 
+    lgbm_text = f"ML Order Flow Model: {scoring_output.split('ML: ')[-1]}" if "ML: " in scoring_output else "ML Order Flow Model: unavailable"
+
     prompt = f"""You are BTC Oracle V4. The scoring model gives a calibrated signal.
 You should AGREE unless order book or news STRONGLY contradicts.
 
 === SCORING MODEL (follow this) ===
 {scoring_output}
+
+=== ML ORDER FLOW MODEL (LightGBM trained on 2 months of tick data) ===
+{lgbm_text}
 
 === MARKET REGIME ===
 {regime_text}
@@ -280,8 +286,18 @@ def run_signal_cycle():
     correlated_data = get_all_correlated_data()
 
     print("\n[9/12] Scoring model...")
-    score, score_conf, score_dir = score_signal(indicators, market_data)
+    # Step 9.5: LightGBM ML order flow signal (Tier 7)
+    lgbm_features = lgbm_signal.compute_features(indicators, market_data)
+    lgbm_dir, lgbm_conf = lgbm_signal.predict(lgbm_features)
+    if lgbm_dir != "SKIP":
+        print(f"  ML signal: {lgbm_dir} (confidence: {lgbm_conf:.0%})")
+    else:
+        print("  ML signal: unavailable (model not loaded or data insufficient)")
+
+    score, score_conf, score_dir = score_signal(indicators, market_data, lgbm_dir, lgbm_conf)
     scoring_output = f"Score: {score:+.3f} | Signal: {score_dir} | Confidence: {score_conf:.0%}"
+    if lgbm_dir != "SKIP":
+        scoring_output += f" | ML: {lgbm_dir} ({lgbm_conf:.0%})"
     print(f"  {scoring_output}")
 
     print("\n[10/12] Kalshi odds...")

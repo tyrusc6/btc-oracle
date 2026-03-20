@@ -31,6 +31,7 @@ DEFAULT_TIER_WEIGHTS = {
     "ask_wall": 1.5,
     "vwap_revert": 0.8,
     "obv_divergence": 1.5,
+    "lgbm_orderflow": 3.0,  # Tier 7: ML model trained on tick-level order flow
 }
 
 
@@ -112,7 +113,7 @@ def _track(stats, tier, was_correct):
         stats[tier]["correct"] += 1
 
 
-def score_signal(indicators, market_data=None):
+def score_signal(indicators, market_data=None, lgbm_dir=None, lgbm_conf=0.0):
     """
     Mean Reversion + Order Flow scoring with learned weights.
     """
@@ -239,6 +240,14 @@ def score_signal(indicators, market_data=None):
         votes.append((-1, weights["obv_divergence"]))
     elif obv == "RISING" and "DOWNTREND" in trend_1m:
         votes.append((+1, weights["obv_divergence"]))
+
+    # ============================================
+    # TIER 7: LIGHTGBM ML ORDER FLOW SIGNAL
+    # ============================================
+    if lgbm_dir in ("UP", "DOWN") and lgbm_conf >= 0.10:
+        direction = +1 if lgbm_dir == "UP" else -1
+        # Scale weight by confidence: full weight at conf >= 0.10
+        votes.append((direction, weights["lgbm_orderflow"]))
 
     # ============================================
     # CALCULATE
