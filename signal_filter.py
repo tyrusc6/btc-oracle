@@ -58,7 +58,7 @@ def should_trade(score, score_confidence, claude_signal, claude_confidence,
         else:
             reasons_to_wait.append("RANGING not at extreme")
     elif regime in ("WEAK_UPTREND", "WEAK_DOWNTREND"):
-        reasons_to_wait.append(f"Weak trend: {regime}")
+        pass  # Weak trend — neutral, no vote
 
     # Rule 5: Both timeframe trends must align
     trend_1m = indicators.get("trend_1m", "UNKNOWN")
@@ -82,8 +82,7 @@ def should_trade(score, score_confidence, claude_signal, claude_confidence,
             reasons_to_trade.append("Order flow confirms DOWN")
         elif (ob == "BUY_PRESSURE" and claude_signal == "DOWN") or (ob == "SELL_PRESSURE" and claude_signal == "UP"):
             reasons_to_wait.append("Order flow CONTRADICTS signal")
-        else:
-            reasons_to_wait.append("Order flow neutral — no confirmation")
+        # else: neutral order flow — no vote either way
 
     # Rule 7: ML model must confirm (NEW — stacked model)
     if lgbm_signal and lgbm_signal != "SKIP":
@@ -94,14 +93,14 @@ def should_trade(score, score_confidence, claude_signal, claude_confidence,
         else:
             reasons_to_wait.append(f"ML model uncertain ({lgbm_conf:.0%})")
 
-    # Decision: need 5+ reasons to trade AND more trade than wait
+    # Decision: need 4+ reasons to trade AND more trade than wait
     # AND must have ZERO hard contradictions (order flow or ML opposing)
     trade_score = len(reasons_to_trade)
     wait_score = len(reasons_to_wait)
 
     has_contradiction = any("CONTRADICTS" in r for r in reasons_to_wait)
 
-    should = trade_score >= 5 and trade_score > wait_score and not has_contradiction
+    should = trade_score >= 4 and trade_score > wait_score and not has_contradiction
 
     if should:
         adjusted = min(0.95, (score_confidence + claude_confidence) / 2 + 0.05 * trade_score)
